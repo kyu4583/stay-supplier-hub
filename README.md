@@ -79,6 +79,7 @@
 
 | 문서 | 내용 |
 |---|---|
+| [요구사항](docs/requirements.md) | 만들어야 할 것, 범위, 공급사 연동 계약 |
 | [아키텍처](docs/architecture.md) | 계층 구조, 실행 모델, 어댑터 내부 구조 |
 | [도메인 모델](docs/domain-model.md) | 숙소·객실 타입·오퍼, 요금 기준, 재고와 연박 판정 |
 | [검색 API](docs/search-api.md) | 요청 검증, 응답 계약, 부분 실패와 오류 응답 |
