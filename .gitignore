@@ -11,6 +11,9 @@ build/
 *.mv.db
 *.trace.db
 
+# GSD planning artifacts
+.planning/
+
 # 로그
 *.log
 
