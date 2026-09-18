@@ -11,6 +11,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -20,8 +21,11 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
+import stay.supplierhub.mapping.MappingStore;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -32,6 +36,22 @@ class StaySearchControllerTest {
 
     @Autowired
     MockMvc mockMvc;
+
+    @Autowired
+    MappingStore.MappingSnapshotHolder snapshotHolder;
+
+    @DynamicPropertySource
+    static void 테스트속성(DynamicPropertyRegistry registry) {
+        registry.add("stay.mapping.sync-on-startup", () -> "false");
+        registry.add(
+                "spring.datasource.url",
+                () -> "jdbc:h2:mem:stay-search-controller;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE");
+    }
+
+    @BeforeEach
+    void 준비된_빈_스냅샷으로_둔다() {
+        snapshotHolder.replace(MappingStore.MappingSnapshot.readyEmpty());
+    }
 
     @TestConfiguration
     static class 고정시계설정 {
