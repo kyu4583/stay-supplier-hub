@@ -1,0 +1,319 @@
+package stay.supplierhub.api;
+
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.not;
+import static org.hamcrest.Matchers.notNullValue;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import java.io.IOException;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.TimeUnit;
+import okhttp3.mockwebserver.Dispatcher;
+import okhttp3.mockwebserver.MockResponse;
+import okhttp3.mockwebserver.MockWebServer;
+import okhttp3.mockwebserver.RecordedRequest;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Primary;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.web.servlet.MockMvc;
+import stay.supplierhub.mapping.MappingStore;
+import stay.supplierhub.search.SupplierContracts.SupplierCatalog;
+import stay.supplierhub.search.SupplierContracts.SupplierCatalogPort;
+
+@SpringBootTest
+@AutoConfigureMockMvc
+@DisplayName("공급사 A와 B 검색 연동")
+class StaySearchABIntegrationTest {
+
+    private static final String 검색경로 = "/api/v1/stays/search";
+    private static final String B키 = "demo-b-key";
+    private static final String A숙소목록본문 =
+            """
+            {
+              "items": [
+                {
+                  "hotelCode": "A-10023",
+                  "hotelName": "Riverside Hotel Seoul",
+                  "roomTypes": [
+                    { "roomTypeCode": "DLX-TWN", "roomTypeName": "Deluxe Twin", "maxOccupancy": 2 }
+                  ]
+                },
+                {
+                  "hotelCode": "A-10044",
+                  "hotelName": "Namsan Garden Stay",
+                  "roomTypes": [
+                    { "roomTypeCode": "STD-DBL", "roomTypeName": "Standard Double", "maxOccupancy": 2 }
+                  ]
+                }
+              ]
+            }
+            """;
+    private static final String A재고요금본문 =
+            """
+            {
+              "items": [
+                {
+                  "hotelCode": "A-10023",
+                  "hotelName": "Riverside Hotel Seoul",
+                  "roomTypeCode": "DLX-TWN",
+                  "roomTypeName": "Deluxe Twin",
+                  "maxOccupancy": 2,
+                  "breakfastIncluded": false,
+                  "currency": "KRW",
+                  "dailyRates": [
+                    { "date": "2026-09-20", "remainingRooms": 3, "nightlyRate": 120000, "taxAmount": 12000 },
+                    { "date": "2026-09-21", "remainingRooms": 1, "nightlyRate": 150000, "taxAmount": 15000 },
+                    { "date": "2026-09-22", "remainingRooms": 5, "nightlyRate": 120000, "taxAmount": 12000 }
+                  ]
+                },
+                {
+                  "hotelCode": "A-10044",
+                  "hotelName": "Namsan Garden Stay",
+                  "roomTypeCode": "STD-DBL",
+                  "roomTypeName": "Standard Double",
+                  "maxOccupancy": 4,
+                  "breakfastIncluded": true,
+                  "currency": "KRW",
+                  "dailyRates": [
+                    { "date": "2026-09-20", "remainingRooms": 2, "nightlyRate": 100000, "taxAmount": 10000 },
+                    { "date": "2026-09-21", "remainingRooms": 0, "nightlyRate": 110000, "taxAmount": 11000 },
+                    { "date": "2026-09-22", "remainingRooms": 4, "nightlyRate": 100000, "taxAmount": 10000 }
+                  ]
+                }
+              ]
+            }
+            """;
+    private static final String B숙소목록본문 =
+            """
+            {
+              "resultCode": "0000",
+              "resultMessage": "SUCCESS",
+              "data": {
+                "items": [
+                  {
+                    "propertyId": "B77120",
+                    "propertyName": "Riverside Hotel Seoul",
+                    "rooms": [
+                      { "roomId": "R-401", "roomName": "Deluxe Twin Room", "maxOccupancy": 2 }
+                    ]
+                  }
+                ]
+              }
+            }
+            """;
+    private static final String B재고요금본문 =
+            """
+            {
+              "resultCode": "0000",
+              "resultMessage": "SUCCESS",
+              "data": {
+                "items": [
+                  {
+                    "propertyId": "B77120",
+                    "propertyName": "Riverside Hotel Seoul",
+                    "roomId": "R-401",
+                    "roomName": "Deluxe Twin Room",
+                    "maxOccupancy": 2,
+                    "breakfastIncluded": true,
+                    "currency": "KRW",
+                    "totalPrice": 452000,
+                    "taxIncluded": true,
+                    "inventory": [
+                      { "date": "2026-09-20", "remainingRooms": 3 },
+                      { "date": "2026-09-21", "remainingRooms": 1 },
+                      { "date": "2026-09-22", "remainingRooms": 5 }
+                    ]
+                  }
+                ]
+              }
+            }
+            """;
+
+    private static final MockWebServer 공급사A = new MockWebServer();
+    private static final MockWebServer 공급사B = new MockWebServer();
+
+    static {
+        try {
+            공급사A.start();
+            공급사B.start();
+        } catch (IOException e) {
+            throw new ExceptionInInitializerError(e);
+        }
+    }
+
+    @Autowired
+    MockMvc mockMvc;
+
+    @Autowired
+    MappingStore.MappingUpsertService mappingUpsertService;
+
+    @Autowired
+    List<SupplierCatalogPort> catalogPorts;
+
+    @DynamicPropertySource
+    static void 테스트속성(DynamicPropertyRegistry registry) {
+        registry.add("stay.supplier.a.base-url", () -> 공급사A.url("/").toString().replaceAll("/$", ""));
+        registry.add("stay.supplier.a.api-key", () -> "demo-a-key");
+        registry.add("stay.supplier.b.base-url", () -> 공급사B.url("/").toString().replaceAll("/$", ""));
+        registry.add("stay.supplier.b.api-key", () -> B키);
+        registry.add("stay.mapping.sync-on-startup", () -> "false");
+        registry.add(
+                "spring.datasource.url",
+                () -> "jdbc:h2:mem:stay-search-ab;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE");
+    }
+
+    @TestConfiguration
+    static class 고정시계설정 {
+        @Bean
+        @Primary
+        Clock fixedClock() {
+            ZoneId seoul = ZoneId.of("Asia/Seoul");
+            Instant instant = ZonedDateTime.of(2026, 9, 19, 0, 0, 0, 0, seoul).toInstant();
+            return Clock.fixed(instant, seoul);
+        }
+    }
+
+    @AfterAll
+    static void 공급사를_종료한다() throws IOException {
+        공급사A.shutdown();
+        공급사B.shutdown();
+    }
+
+    @BeforeEach
+    void 카탈로그와_재고응답을_준비한다() throws InterruptedException {
+        공급사A.setDispatcher(new Dispatcher() {
+            @Override
+            public MockResponse dispatch(RecordedRequest request) {
+                String path = request.getRequestUrl().encodedPath();
+                if ("/a/v1/hotels".equals(path)) {
+                    return json응답(A숙소목록본문);
+                }
+                if ("/a/v1/availability".equals(path)) {
+                    return json응답(A재고요금본문);
+                }
+                return new MockResponse().setResponseCode(404);
+            }
+        });
+        공급사B.setDispatcher(new Dispatcher() {
+            @Override
+            public MockResponse dispatch(RecordedRequest request) {
+                String path = request.getRequestUrl().encodedPath();
+                if ("/b/api/properties".equals(path)) {
+                    return json응답(B숙소목록본문);
+                }
+                if ("/b/api/search".equals(path)) {
+                    return json응답(B재고요금본문);
+                }
+                return new MockResponse().setResponseCode(404);
+            }
+        });
+        for (SupplierCatalogPort port : catalogPorts) {
+            SupplierCatalog catalog = port.fetchCatalog().block();
+            mappingUpsertService.apply(catalog);
+        }
+        while (공급사A.takeRequest(1, TimeUnit.MILLISECONDS) != null) {
+            // 목록 조회 기록을 비워 검색 요청만 남긴다
+        }
+        while (공급사B.takeRequest(1, TimeUnit.MILLISECONDS) != null) {
+            // 목록 조회 기록을 비워 검색 요청만 남긴다
+        }
+    }
+
+    @Test
+    @DisplayName("한 검색이 A 429000과 B 452000을 서로 다른 propertyId로 돌려준다")
+    void A와_B를_한_검색에서_서로_다른_ID로_받는다() throws Exception {
+        String json = mockMvc.perform(get(검색경로)
+                        .param("checkIn", "2026-09-20")
+                        .param("checkOut", "2026-09-23")
+                        .param("adults", "2")
+                        .param("children", "0"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.failedSuppliers").isArray())
+                .andExpect(jsonPath("$.failedSuppliers.length()").value(0))
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        Map<String, Object> A오퍼묶음 = 공급사오퍼(json, "A", 429000L);
+        Map<String, Object> B오퍼묶음 = 공급사오퍼(json, "B", 452000L);
+        Map<String, Object> A오퍼 = 맵(A오퍼묶음.get("offer"));
+        Map<String, Object> B오퍼 = 맵(B오퍼묶음.get("offer"));
+        Map<String, Object> A숙소 = 맵(A오퍼묶음.get("property"));
+        Map<String, Object> B숙소 = 맵(B오퍼묶음.get("property"));
+        Map<String, Object> A객실 = 맵(A오퍼묶음.get("roomType"));
+        Map<String, Object> B객실 = 맵(B오퍼묶음.get("roomType"));
+
+        assertThat(((Number) A오퍼.get("totalPrice")).longValue(), equalTo(429000L));
+        assertThat((Boolean) A오퍼.get("breakfastIncluded"), equalTo(false));
+        assertThat(((Number) B오퍼.get("totalPrice")).longValue(), equalTo(452000L));
+        assertThat((Boolean) B오퍼.get("breakfastIncluded"), equalTo(true));
+        assertThat(((Number) B오퍼.get("availableRooms")).intValue(), equalTo(1));
+        assertThat(((Number) A숙소.get("propertyId")).longValue(), not(equalTo(((Number) B숙소.get("propertyId")).longValue())));
+        assertThat(((Number) A객실.get("roomTypeId")).longValue(), not(equalTo(((Number) B객실.get("roomTypeId")).longValue())));
+
+        RecordedRequest B검색 = 공급사B.takeRequest(200, TimeUnit.MILLISECONDS);
+        assertThat(B검색, notNullValue());
+        assertThat(B검색.getRequestUrl().encodedPath(), equalTo("/b/api/search"));
+        assertThat(B검색.getRequestUrl().queryParameter("propertyIds"), containsString("B77120"));
+        assertThat(B검색.getRequestUrl().queryParameter("checkIn"), equalTo("2026-09-20"));
+        assertThat(B검색.getRequestUrl().queryParameter("checkOut"), equalTo("2026-09-23"));
+        assertThat(B검색.getRequestUrl().queryParameter("adults"), equalTo("2"));
+        assertThat(B검색.getRequestUrl().queryParameter("children"), equalTo("0"));
+        assertThat(B검색.getHeader("X-Api-Key"), equalTo(B키));
+        assertThat(B검색.getHeader("Authorization"), equalTo(null));
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> 공급사오퍼(String json, String supplier, long totalPrice) {
+        List<Map<String, Object>> properties = com.jayway.jsonpath.JsonPath.read(json, "$.properties");
+        for (Map<String, Object> property : properties) {
+            List<Map<String, Object>> roomTypes = (List<Map<String, Object>>) property.get("roomTypes");
+            if (roomTypes == null) {
+                continue;
+            }
+            for (Map<String, Object> roomType : roomTypes) {
+                List<Map<String, Object>> offers = (List<Map<String, Object>>) roomType.get("offers");
+                if (offers == null) {
+                    continue;
+                }
+                for (Map<String, Object> offer : offers) {
+                    if (!supplier.equals(offer.get("supplier"))) {
+                        continue;
+                    }
+                    Object price = offer.get("totalPrice");
+                    if (price instanceof Number number && number.longValue() == totalPrice) {
+                        return Map.of("property", property, "roomType", roomType, "offer", offer);
+                    }
+                }
+            }
+        }
+        throw new AssertionError("공급사 " + supplier + " 오퍼 " + totalPrice + "가 없다: " + json);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> 맵(Object value) {
+        return (Map<String, Object>) value;
+    }
+
+    private static MockResponse json응답(String body) {
+        return new MockResponse().setHeader("Content-Type", "application/json;charset=UTF-8").setBody(body);
+    }
+}
