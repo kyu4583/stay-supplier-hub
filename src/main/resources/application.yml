@@ -10,9 +10,22 @@ spring:
   jpa:
     hibernate:
       ddl-auto: none
+  flyway:
+    enabled: true
 
 stay:
   search:
     max-nights: 30
     max-check-in-days-ahead: 180
     max-guests: 36
+  mapping:
+    sync-on-startup: true
+  supplier:
+    a:
+      base-url: http://localhost:9090
+      api-key: demo-a-key
+      max-codes-per-call: 50
+      response-timeout: 2s
+      connect-timeout: 1s
+      pending-acquire-timeout: 500ms
+      max-connections: 8

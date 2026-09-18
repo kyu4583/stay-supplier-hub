@@ -1,5 +1,8 @@
 package stay.supplierhub.api;
 
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.equalTo;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -26,6 +29,9 @@ import org.springframework.context.annotation.Primary;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
+import stay.supplierhub.mapping.MappingStore;
+import stay.supplierhub.search.SupplierContracts.SupplierCatalog;
+import stay.supplierhub.search.SupplierContracts.SupplierCatalogPort;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -82,6 +88,12 @@ class StaySearchAIntegrationTest {
     @Autowired
     MockMvc mockMvc;
 
+    @Autowired
+    MappingStore.MappingUpsertService mappingUpsertService;
+
+    @Autowired
+    SupplierCatalogPort catalogPort;
+
     @DynamicPropertySource
     static void 테스트속성(DynamicPropertyRegistry registry) {
         registry.add("stay.supplier.a.base-url", () -> 공급사A.url("/").toString().replaceAll("/$", ""));
@@ -123,6 +135,8 @@ class StaySearchAIntegrationTest {
                 return new MockResponse().setResponseCode(404);
             }
         });
+        SupplierCatalog catalog = catalogPort.fetchCatalog().block();
+        mappingUpsertService.apply(catalog);
     }
 
     @Test
@@ -144,6 +158,20 @@ class StaySearchAIntegrationTest {
                 .andExpect(jsonPath("$.properties[0].roomTypes[0].offers[0].breakfastIncluded").value(false))
                 .andExpect(jsonPath("$.properties[0].roomTypes[0].offers[0].dailyRates").doesNotExist())
                 .andExpect(jsonPath("$.properties[0].roomTypes[0].offers[0].nightlyRate").doesNotExist());
+
+        RecordedRequest 목록요청 = 공급사A.takeRequest();
+        RecordedRequest 재고요청 = 공급사A.takeRequest();
+        if (!"/a/v1/availability".equals(재고요청.getRequestUrl().encodedPath())
+                && "/a/v1/availability".equals(목록요청.getRequestUrl().encodedPath())) {
+            재고요청 = 목록요청;
+        }
+        assertThat(재고요청.getRequestUrl().encodedPath(), equalTo("/a/v1/availability"));
+        assertThat(재고요청.getRequestUrl().queryParameter("hotelCodes"), containsString("A-10023"));
+        assertThat(재고요청.getRequestUrl().queryParameter("checkIn"), equalTo("2026-09-20"));
+        assertThat(재고요청.getRequestUrl().queryParameter("checkOut"), equalTo("2026-09-23"));
+        assertThat(재고요청.getRequestUrl().queryParameter("adults"), equalTo("2"));
+        assertThat(재고요청.getRequestUrl().queryParameter("children"), equalTo("0"));
+        assertThat(재고요청.getHeader("X-Api-Key"), equalTo("demo-a-key"));
     }
 
     private static MockResponse json응답(String body) {
