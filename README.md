@@ -10,11 +10,21 @@
 
 Java 25가 필요합니다. 저장소 루트에서 실행합니다.
 
+시연 Mock A를 먼저 띄운 뒤 앱을 띄웁니다. Mock A는 9090, 앱은 8080입니다. 단일 인스턴스 가정입니다.
+
+```text
+.\gradlew.bat :mock-a:bootRun
+```
+
+다른 터미널에서:
+
 ```text
 .\gradlew.bat bootRun
 ```
 
-기본 포트는 8080입니다.
+기본 포트는 8080입니다. 앱은 `http://localhost:9090`의 Mock A를 호출합니다.
+
+숙소 목록을 수동으로 다시 받으려면 `POST /internal/mapping/sync`를 씁니다. 로컬 관리용이며 인증이 없습니다.
 
 검색 예시:
 
