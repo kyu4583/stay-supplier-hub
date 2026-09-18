@@ -113,6 +113,8 @@ class PropertyListSyncTest {
     static void 테스트속성(DynamicPropertyRegistry registry) {
         registry.add("stay.supplier.a.base-url", () -> 카탈로그서버.url("/").toString().replaceAll("/$", ""));
         registry.add("stay.supplier.a.api-key", () -> "demo-a-key");
+        registry.add("stay.supplier.b.base-url", () -> 카탈로그서버.url("/").toString().replaceAll("/$", ""));
+        registry.add("stay.supplier.b.api-key", () -> "demo-b-key");
         registry.add("stay.mapping.sync-on-startup", () -> "false");
         registry.add(
                 "spring.datasource.url",

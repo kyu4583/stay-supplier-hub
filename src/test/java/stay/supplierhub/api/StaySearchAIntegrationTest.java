@@ -122,7 +122,7 @@ class StaySearchAIntegrationTest {
     MappingStore.MappingSnapshotHolder snapshotHolder;
 
     @Autowired
-    SupplierCatalogPort catalogPort;
+    List<SupplierCatalogPort> catalogPorts;
 
     @Autowired
     JdbcTemplate jdbcTemplate;
@@ -131,6 +131,8 @@ class StaySearchAIntegrationTest {
     static void 테스트속성(DynamicPropertyRegistry registry) {
         registry.add("stay.supplier.a.base-url", () -> 공급사A.url("/").toString().replaceAll("/$", ""));
         registry.add("stay.supplier.a.api-key", () -> "demo-a-key");
+        registry.add("stay.supplier.b.base-url", () -> 공급사A.url("/").toString().replaceAll("/$", ""));
+        registry.add("stay.supplier.b.api-key", () -> "demo-b-key");
         registry.add("stay.mapping.sync-on-startup", () -> "false");
         registry.add(
                 "spring.datasource.url",
@@ -168,7 +170,7 @@ class StaySearchAIntegrationTest {
                 return new MockResponse().setResponseCode(404);
             }
         });
-        SupplierCatalog catalog = catalogPort.fetchCatalog().block();
+        SupplierCatalog catalog = 공급사A카탈로그().fetchCatalog().block();
         mappingUpsertService.apply(catalog);
         while (공급사A.takeRequest(1, TimeUnit.MILLISECONDS) != null) {
             // 목록 조회 기록을 비워 검색 요청만 남긴다
@@ -272,6 +274,13 @@ class StaySearchAIntegrationTest {
             return (T) list.getFirst();
         }
         return (T) value;
+    }
+
+    private SupplierCatalogPort 공급사A카탈로그() {
+        return catalogPorts.stream()
+                .filter(port -> "A".equals(port.supplierId().value()))
+                .findFirst()
+                .orElseThrow();
     }
 
     private static MockResponse json응답(String body) {

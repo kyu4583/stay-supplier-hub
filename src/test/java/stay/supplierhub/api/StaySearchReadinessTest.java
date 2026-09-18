@@ -1,6 +1,7 @@
 package stay.supplierhub.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.hasItem;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -79,7 +80,7 @@ class StaySearchReadinessTest {
                 .andExpect(jsonPath("$.status").value(503))
                 .andExpect(jsonPath("$.detail").exists())
                 .andExpect(jsonPath("$.instance").exists())
-                .andExpect(jsonPath("$.failedSuppliers[0].supplier").value("A"))
+                .andExpect(jsonPath("$.failedSuppliers[*].supplier").value(hasItem("A")))
                 .andExpect(header().doesNotExist("Retry-After"));
     }
 
