@@ -1,0 +1,18 @@
+spring:
+  threads:
+    virtual:
+      enabled: true
+  mvc:
+    problemdetails:
+      enabled: true
+  datasource:
+    url: jdbc:h2:file:./data/stay-supplier-hub
+  jpa:
+    hibernate:
+      ddl-auto: none
+
+stay:
+  search:
+    max-nights: 30
+    max-check-in-days-ahead: 180
+    max-guests: 36
