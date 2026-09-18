@@ -6,6 +6,27 @@
 
 여러 숙박 공급사의 상품을 하나의 검색 결과로 통합하는 백엔드입니다. 고객은 상품이 어느 공급사에서 왔는지와 무관하게 같은 형태의 결과를 봅니다.
 
+## 로컬 실행
+
+Java 25가 필요합니다. 저장소 루트에서 실행합니다.
+
+```text
+.\gradlew.bat bootRun
+```
+
+기본 포트는 8080입니다.
+
+검색 예시:
+
+```text
+GET http://localhost:8080/api/v1/stays/search?checkIn=2026-09-01&checkOut=2026-09-04&adults=2&children=0
+```
+
+OpenAPI는 SpringDoc 기본 경로입니다.
+
+- UI: http://localhost:8080/swagger-ui.html
+- JSON: http://localhost:8080/v3/api-docs
+
 ## 연동의 성격
 
 두 공급사는 같은 숙박 상품을 팔지만 표현이 다릅니다.
@@ -89,5 +110,3 @@
 | [검색 API](docs/search-api.md) | 요청 검증, 응답 계약, 부분 실패와 오류 응답 |
 | [공급사 연동](docs/supplier-integration.md) | 매핑 저장, 동기화, 실패 판정, 타임아웃, 신규 공급사 추가 |
 | [범위 밖 설계](docs/deferred-design.md) | 지금 구현하지 않고 설계만 남긴 것들 |
-
-빌드·실행 방법은 구현과 함께 추가합니다.
