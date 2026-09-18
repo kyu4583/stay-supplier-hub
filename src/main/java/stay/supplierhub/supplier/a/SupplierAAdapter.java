@@ -4,7 +4,9 @@ import com.fasterxml.jackson.annotation.JsonAutoDetect;
 import io.netty.channel.ChannelOption;
 import java.time.Duration;
 import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.Currency;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -25,12 +27,15 @@ import reactor.netty.resources.ConnectionProvider;
 import stay.supplierhub.search.SupplierContracts.AvailabilityQuery;
 import stay.supplierhub.search.SupplierContracts.CatalogProperty;
 import stay.supplierhub.search.SupplierContracts.CatalogRoomType;
+import stay.supplierhub.search.SupplierContracts.ChunkFailure;
 import stay.supplierhub.search.SupplierContracts.RoomOffer;
+import stay.supplierhub.search.SupplierContracts.RoomTypeKey;
 import stay.supplierhub.search.SupplierContracts.SupplierAvailabilityPort;
 import stay.supplierhub.search.SupplierContracts.SupplierCatalog;
 import stay.supplierhub.search.SupplierContracts.SupplierCatalogPort;
 import stay.supplierhub.search.SupplierContracts.SupplierId;
 import stay.supplierhub.search.SupplierContracts.SupplierSearchResult;
+import stay.supplierhub.search.SupplierContracts.UnmappedRoomType;
 import tools.jackson.databind.json.JsonMapper;
 
 @ConfigurationProperties(prefix = "stay.supplier.a")
@@ -81,20 +86,75 @@ final class SupplierAMapper {
     SupplierSearchResult toSearchResult(SupplierAAvailabilityResponse response, AvailabilityQuery query) {
         Set<LocalDate> expectedNights =
                 query.checkIn().datesUntil(query.checkOut()).collect(Collectors.toCollection(LinkedHashSet::new));
-        List<RoomOffer> offers = new ArrayList<>();
-        for (SupplierAAvailabilityItem item : response.items()) {
-            toOffer(item, expectedNights).ifPresent(offers::add);
+        List<SupplierAAvailabilityItem> items = response.items() == null ? List.of() : response.items();
+        Set<String> requestedHotels = new LinkedHashSet<>(query.hotelCodes());
+        Set<RoomTypeKey> knownRoomTypes =
+                query.knownRoomTypes() == null ? Set.of() : query.knownRoomTypes();
+        boolean checkMapping = !knownRoomTypes.isEmpty();
+        int requestedGuests = query.adults() + query.children();
+
+        Map<String, Integer> keyCounts = new LinkedHashMap<>();
+        for (SupplierAAvailabilityItem item : items) {
+            keyCounts.merge(itemKey(item), 1, Integer::sum);
         }
-        return new SupplierSearchResult(new SupplierId("A"), List.copyOf(offers), List.of());
+        Set<String> duplicateKeys = keyCounts.entrySet().stream()
+                .filter(entry -> entry.getValue() > 1)
+                .map(Map.Entry::getKey)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+
+        List<RoomOffer> offers = new ArrayList<>();
+        List<UnmappedRoomType> unmapped = new ArrayList<>();
+        for (SupplierAAvailabilityItem item : items) {
+            String key = itemKey(item);
+            if (duplicateKeys.contains(key)) {
+                continue;
+            }
+            if (item.hotelCode() == null || !requestedHotels.contains(item.hotelCode())) {
+                continue;
+            }
+            if (checkMapping
+                    && !knownRoomTypes.contains(new RoomTypeKey(item.hotelCode(), item.roomTypeCode()))) {
+                unmapped.add(new UnmappedRoomType(item.hotelCode(), item.roomTypeCode()));
+                continue;
+            }
+            toOffer(item, expectedNights, requestedGuests).ifPresent(offers::add);
+        }
+        List<ChunkFailure> failures = items.isEmpty() || !offers.isEmpty()
+                ? List.of()
+                : List.of(new ChunkFailure(new SupplierId("A"), "INVALID_RESPONSE"));
+        return new SupplierSearchResult(
+                new SupplierId("A"), List.copyOf(offers), failures, List.copyOf(unmapped));
     }
 
-    private Optional<RoomOffer> toOffer(SupplierAAvailabilityItem item, Set<LocalDate> expectedNights) {
+    private Optional<RoomOffer> toOffer(
+            SupplierAAvailabilityItem item, Set<LocalDate> expectedNights, int requestedGuests) {
+        if (item.maxOccupancy() < requestedGuests) {
+            return Optional.empty();
+        }
+        if (!knownCurrency(item.currency())) {
+            return Optional.empty();
+        }
         if (item.dailyRates() == null) {
             return Optional.empty();
         }
         Map<LocalDate, SupplierADailyRate> byDate = new LinkedHashMap<>();
         for (SupplierADailyRate rate : item.dailyRates()) {
-            byDate.put(LocalDate.parse(rate.date()), rate);
+            if (rate == null || rate.date() == null) {
+                return Optional.empty();
+            }
+            LocalDate date;
+            try {
+                date = LocalDate.parse(rate.date());
+            } catch (DateTimeParseException ex) {
+                return Optional.empty();
+            }
+            if (byDate.containsKey(date)) {
+                return Optional.empty();
+            }
+            if (rate.remainingRooms() < 0 || rate.nightlyRate() < 0 || rate.taxAmount() < 0) {
+                return Optional.empty();
+            }
+            byDate.put(date, rate);
         }
         if (!expectedNights.equals(byDate.keySet())) {
             return Optional.empty();
@@ -116,6 +176,24 @@ final class SupplierAMapper {
                 totalPrice,
                 item.currency(),
                 List.copyOf(remainingRooms)));
+    }
+
+    private static String itemKey(SupplierAAvailabilityItem item) {
+        String hotelCode = item.hotelCode() == null ? "" : item.hotelCode();
+        String roomTypeCode = item.roomTypeCode() == null ? "" : item.roomTypeCode();
+        return hotelCode + '\0' + roomTypeCode;
+    }
+
+    private static boolean knownCurrency(String code) {
+        if (code == null || code.isBlank()) {
+            return false;
+        }
+        try {
+            Currency.getInstance(code);
+            return true;
+        } catch (IllegalArgumentException ex) {
+            return false;
+        }
     }
 }
 

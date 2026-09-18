@@ -16,11 +16,13 @@ import stay.supplierhub.api.StaySearchResponse.RoomTypeResponse;
 import stay.supplierhub.mapping.MappingStore.MappedOfferTarget;
 import stay.supplierhub.mapping.MappingStore.MappingSnapshot;
 import stay.supplierhub.mapping.MappingStore.MappingSnapshotHolder;
+import stay.supplierhub.mapping.MappingSync.PropertyListSynchronizer;
 import stay.supplierhub.search.SupplierContracts.AvailabilityQuery;
 import stay.supplierhub.search.SupplierContracts.RoomOffer;
 import stay.supplierhub.search.SupplierContracts.StaySearchUnavailableException;
 import stay.supplierhub.search.SupplierContracts.SupplierAvailabilityPort;
 import stay.supplierhub.search.SupplierContracts.SupplierSearchResult;
+import stay.supplierhub.search.SupplierContracts.UnmappedRoomType;
 
 public interface StaySearchService {
 
@@ -32,11 +34,15 @@ class DefaultStaySearchService implements StaySearchService {
 
     private final MappingSnapshotHolder snapshotHolder;
     private final List<SupplierAvailabilityPort> availabilityPorts;
+    private final PropertyListSynchronizer synchronizer;
 
     DefaultStaySearchService(
-            MappingSnapshotHolder snapshotHolder, List<SupplierAvailabilityPort> availabilityPorts) {
+            MappingSnapshotHolder snapshotHolder,
+            List<SupplierAvailabilityPort> availabilityPorts,
+            PropertyListSynchronizer synchronizer) {
         this.snapshotHolder = snapshotHolder;
         this.availabilityPorts = List.copyOf(availabilityPorts);
+        this.synchronizer = synchronizer;
     }
 
     @Override
@@ -56,14 +62,26 @@ class DefaultStaySearchService implements StaySearchService {
                 continue;
             }
             calls.add(port.fetchAvailability(new AvailabilityQuery(
-                    hotelCodes, request.checkIn(), request.checkOut(), request.adults(), request.children())));
+                    hotelCodes,
+                    request.checkIn(),
+                    request.checkOut(),
+                    request.adults(),
+                    request.children(),
+                    snapshot.knownRoomTypes(port.supplierId()))));
         }
         if (calls.isEmpty()) {
             return new StaySearchResponse(List.of(), List.of());
         }
 
         List<SupplierSearchResult> results = Flux.merge(calls).collectList().block();
-        return assemble(snapshot, results == null ? List.of() : results);
+        List<SupplierSearchResult> resolved = results == null ? List.of() : results;
+        for (SupplierSearchResult result : resolved) {
+            for (UnmappedRoomType unmapped : result.unmappedRoomTypes()) {
+                synchronizer.requestForUnmapped(
+                        result.supplier(), unmapped.supplierPropertyCode(), unmapped.supplierRoomTypeCode());
+            }
+        }
+        return assemble(snapshot, resolved);
     }
 
     private StaySearchResponse assemble(MappingSnapshot snapshot, List<SupplierSearchResult> results) {
@@ -75,11 +93,12 @@ class DefaultStaySearchService implements StaySearchService {
                 failedSuppliers.add(new FailedSupplierResponse(result.supplier().value()));
             }
             for (RoomOffer offer : result.offers()) {
-                snapshot.find(result.supplier(), offer.supplierPropertyCode(), offer.supplierRoomTypeCode())
-                        .ifPresent(mapped -> {
-                            addOffer(properties, mapped, result.supplier().value(), offer);
-                        });
-                anyOffer = true;
+                java.util.Optional<MappedOfferTarget> mapped = snapshot.find(
+                        result.supplier(), offer.supplierPropertyCode(), offer.supplierRoomTypeCode());
+                if (mapped.isPresent()) {
+                    addOffer(properties, mapped.get(), result.supplier().value(), offer);
+                    anyOffer = true;
+                }
             }
         }
         if (!anyOffer && !failedSuppliers.isEmpty()) {

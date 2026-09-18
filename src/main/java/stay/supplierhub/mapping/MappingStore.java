@@ -29,6 +29,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import stay.supplierhub.search.SupplierContracts.CatalogProperty;
 import stay.supplierhub.search.SupplierContracts.CatalogRoomType;
+import stay.supplierhub.search.SupplierContracts.RoomTypeKey;
 import stay.supplierhub.search.SupplierContracts.SupplierCatalog;
 import stay.supplierhub.search.SupplierContracts.SupplierId;
 
@@ -160,6 +161,20 @@ public final class MappingStore {
                     .filter(property -> property.supplier().equals(supplierCode))
                     .map(MappedProperty::supplierPropertyCode)
                     .toList();
+        }
+
+        public Set<RoomTypeKey> knownRoomTypes(SupplierId supplier) {
+            String supplierCode = supplier.value();
+            Set<RoomTypeKey> keys = new LinkedHashSet<>();
+            for (MappedProperty property : properties) {
+                if (!property.supplier().equals(supplierCode)) {
+                    continue;
+                }
+                for (MappedRoomType roomType : property.roomTypes()) {
+                    keys.add(new RoomTypeKey(property.supplierPropertyCode(), roomType.supplierRoomTypeCode()));
+                }
+            }
+            return Set.copyOf(keys);
         }
 
         public Optional<MappedOfferTarget> find(
