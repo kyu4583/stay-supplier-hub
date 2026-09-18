@@ -3,15 +3,19 @@ package stay.supplierhub.api;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.not;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.jayway.jsonpath.JsonPath;
 import java.io.IOException;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
+import java.util.List;
+import java.util.concurrent.TimeUnit;
 import okhttp3.mockwebserver.Dispatcher;
 import okhttp3.mockwebserver.MockResponse;
 import okhttp3.mockwebserver.MockWebServer;
@@ -26,12 +30,14 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import stay.supplierhub.mapping.MappingStore;
 import stay.supplierhub.search.SupplierContracts.SupplierCatalog;
 import stay.supplierhub.search.SupplierContracts.SupplierCatalogPort;
+import stay.supplierhub.search.SupplierContracts.SupplierId;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -48,6 +54,13 @@ class StaySearchAIntegrationTest {
                   "hotelName": "Riverside Hotel Seoul",
                   "roomTypes": [
                     { "roomTypeCode": "DLX-TWN", "roomTypeName": "Deluxe Twin", "maxOccupancy": 2 }
+                  ]
+                },
+                {
+                  "hotelCode": "A-10044",
+                  "hotelName": "Old Name",
+                  "roomTypes": [
+                    { "roomTypeCode": "STD-DBL", "roomTypeName": "Standard Double", "maxOccupancy": 2 }
                   ]
                 }
               ]
@@ -69,6 +82,20 @@ class StaySearchAIntegrationTest {
                     { "date": "2026-09-20", "remainingRooms": 3, "nightlyRate": 120000, "taxAmount": 12000 },
                     { "date": "2026-09-21", "remainingRooms": 1, "nightlyRate": 150000, "taxAmount": 15000 },
                     { "date": "2026-09-22", "remainingRooms": 5, "nightlyRate": 120000, "taxAmount": 12000 }
+                  ]
+                },
+                {
+                  "hotelCode": "A-10044",
+                  "hotelName": "Namsan Garden Stay",
+                  "roomTypeCode": "STD-DBL",
+                  "roomTypeName": "Standard Double",
+                  "maxOccupancy": 4,
+                  "breakfastIncluded": true,
+                  "currency": "KRW",
+                  "dailyRates": [
+                    { "date": "2026-09-20", "remainingRooms": 2, "nightlyRate": 100000, "taxAmount": 10000 },
+                    { "date": "2026-09-21", "remainingRooms": 0, "nightlyRate": 110000, "taxAmount": 11000 },
+                    { "date": "2026-09-22", "remainingRooms": 4, "nightlyRate": 100000, "taxAmount": 10000 }
                   ]
                 }
               ]
@@ -92,7 +119,13 @@ class StaySearchAIntegrationTest {
     MappingStore.MappingUpsertService mappingUpsertService;
 
     @Autowired
+    MappingStore.MappingSnapshotHolder snapshotHolder;
+
+    @Autowired
     SupplierCatalogPort catalogPort;
+
+    @Autowired
+    JdbcTemplate jdbcTemplate;
 
     @DynamicPropertySource
     static void 테스트속성(DynamicPropertyRegistry registry) {
@@ -121,7 +154,7 @@ class StaySearchAIntegrationTest {
     }
 
     @BeforeEach
-    void 공급사A응답을_준비한다() {
+    void 공급사A응답을_준비한다() throws InterruptedException {
         공급사A.setDispatcher(new Dispatcher() {
             @Override
             public MockResponse dispatch(RecordedRequest request) {
@@ -137,31 +170,36 @@ class StaySearchAIntegrationTest {
         });
         SupplierCatalog catalog = catalogPort.fetchCatalog().block();
         mappingUpsertService.apply(catalog);
+        while (공급사A.takeRequest(1, TimeUnit.MILLISECONDS) != null) {
+            // 목록 조회 기록을 비워 검색 요청만 남긴다
+        }
     }
 
     @Test
     @DisplayName("A 숙소 검색은 세금포함 기간 총액 429000과 기간 최소 재고 1을 반환한다")
     void A검색_세금포함총액과_기간최소재고() throws Exception {
-        mockMvc.perform(get(검색경로)
+        String json = mockMvc.perform(get(검색경로)
                         .param("checkIn", "2026-09-20")
                         .param("checkOut", "2026-09-23")
                         .param("adults", "2")
                         .param("children", "0"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.properties.length()").value(1))
-                .andExpect(jsonPath("$.properties[0].propertyId").isNumber())
-                .andExpect(jsonPath("$.properties[0].roomTypes[0].roomTypeId").isNumber())
-                .andExpect(jsonPath("$.properties[0].roomTypes[0].offers[0].supplier").value("A"))
-                .andExpect(jsonPath("$.properties[0].roomTypes[0].offers[0].totalPrice").value(429000))
-                .andExpect(jsonPath("$.properties[0].roomTypes[0].offers[0].currency").value("KRW"))
-                .andExpect(jsonPath("$.properties[0].roomTypes[0].offers[0].availableRooms").value(1))
-                .andExpect(jsonPath("$.properties[0].roomTypes[0].offers[0].breakfastIncluded").value(false))
-                .andExpect(jsonPath("$.properties[0].roomTypes[0].offers[0].dailyRates").doesNotExist())
-                .andExpect(jsonPath("$.properties[0].roomTypes[0].offers[0].nightlyRate").doesNotExist());
+                .andExpect(jsonPath("$.properties[?(@.propertyName == 'Riverside Hotel Seoul')].roomTypes[0].offers[0].supplier")
+                        .value("A"))
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        assertThat(숙소필드(json, "Riverside Hotel Seoul", "roomTypes[0].offers[0].totalPrice"), equalTo(429000));
+        assertThat(숙소필드(json, "Riverside Hotel Seoul", "roomTypes[0].offers[0].currency"), equalTo("KRW"));
+        assertThat(숙소필드(json, "Riverside Hotel Seoul", "roomTypes[0].offers[0].availableRooms"), equalTo(1));
+        assertThat(숙소필드(json, "Riverside Hotel Seoul", "roomTypes[0].offers[0].breakfastIncluded"), equalTo(false));
 
         RecordedRequest 목록요청 = 공급사A.takeRequest();
-        RecordedRequest 재고요청 = 공급사A.takeRequest();
-        if (!"/a/v1/availability".equals(재고요청.getRequestUrl().encodedPath())
+        RecordedRequest 재고요청 = 공급사A.takeRequest(1, TimeUnit.MILLISECONDS);
+        if (재고요청 == null) {
+            재고요청 = 목록요청;
+        } else if (!"/a/v1/availability".equals(재고요청.getRequestUrl().encodedPath())
                 && "/a/v1/availability".equals(목록요청.getRequestUrl().encodedPath())) {
             재고요청 = 목록요청;
         }
@@ -172,6 +210,68 @@ class StaySearchAIntegrationTest {
         assertThat(재고요청.getRequestUrl().queryParameter("adults"), equalTo("2"));
         assertThat(재고요청.getRequestUrl().queryParameter("children"), equalTo("0"));
         assertThat(재고요청.getHeader("X-Api-Key"), equalTo("demo-a-key"));
+    }
+
+    @Test
+    @DisplayName("재고 0인 Namsan 오퍼는 남고 이름과 인원은 응답에서만 덮어쓴다")
+    void 재고0_오퍼유지와_이름인원덮어쓰기() throws Exception {
+        String json = mockMvc.perform(get(검색경로)
+                        .param("checkIn", "2026-09-20")
+                        .param("checkOut", "2026-09-23")
+                        .param("adults", "2")
+                        .param("children", "0"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.properties.length()").value(2))
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        assertThat(숙소필드(json, "Namsan Garden Stay", "roomTypes[0].offers[0].availableRooms"), equalTo(0));
+        assertThat(숙소필드(json, "Namsan Garden Stay", "roomTypes[0].offers[0].totalPrice"), equalTo(341000));
+        assertThat(숙소필드(json, "Namsan Garden Stay", "roomTypes[0].offers[0].breakfastIncluded"), equalTo(true));
+        assertThat(숙소필드(json, "Namsan Garden Stay", "roomTypes[0].maxOccupancy"), equalTo(4));
+        assertThat(숙소필드(json, "Namsan Garden Stay", "propertyName"), equalTo("Namsan Garden Stay"));
+
+        Number 리버사이드Id = 숙소필드(json, "Riverside Hotel Seoul", "propertyId");
+        Number 남산Id = 숙소필드(json, "Namsan Garden Stay", "propertyId");
+        assertThat(리버사이드Id.longValue(), not(equalTo(남산Id.longValue())));
+
+        String 매핑숙소명 = jdbcTemplate.queryForObject(
+                "select name from property where supplier = ? and supplier_property_code = ?",
+                String.class,
+                "A",
+                "A-10044");
+        assertThat(매핑숙소명, equalTo("Old Name"));
+        Integer 매핑최대인원 = jdbcTemplate.queryForObject(
+                """
+                select rt.max_occupancy
+                  from room_type rt
+                  join property p on rt.property_id = p.id
+                 where p.supplier = ?
+                   and p.supplier_property_code = ?
+                   and rt.supplier_room_type_code = ?
+                """,
+                Integer.class,
+                "A",
+                "A-10044",
+                "STD-DBL");
+        assertThat(매핑최대인원, equalTo(2));
+
+        var 스냅샷매핑 = snapshotHolder
+                .current()
+                .find(new SupplierId("A"), "A-10044", "STD-DBL")
+                .orElseThrow();
+        assertThat(스냅샷매핑.propertyName(), equalTo("Old Name"));
+        assertThat(스냅샷매핑.maxOccupancy(), equalTo(2));
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <T> T 숙소필드(String json, String 숙소명, String 상대경로) {
+        Object value = JsonPath.read(json, "$.properties[?(@.propertyName == '" + 숙소명 + "')]." + 상대경로);
+        if (value instanceof List<?> list) {
+            return (T) list.getFirst();
+        }
+        return (T) value;
     }
 
     private static MockResponse json응답(String body) {
