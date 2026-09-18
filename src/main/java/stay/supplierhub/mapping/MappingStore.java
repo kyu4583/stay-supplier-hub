@@ -15,11 +15,14 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Component;
@@ -95,6 +98,8 @@ class RoomTypeEntity {
 interface PropertyRepository extends JpaRepository<PropertyEntity, Long> {
 
     Optional<PropertyEntity> findBySupplierAndSupplierPropertyCode(String supplier, String supplierPropertyCode);
+
+    List<PropertyEntity> findBySupplier(String supplier);
 
     List<PropertyEntity> findByActiveTrue();
 }
@@ -221,7 +226,15 @@ public final class MappingStore {
         public void apply(SupplierCatalog catalog) {
             Instant now = Instant.now(clock);
             String supplier = catalog.supplier().value();
+            Set<String> incomingPropertyCodes = new LinkedHashSet<>();
+            Map<String, Set<String>> incomingRoomCodesByProperty = new LinkedHashMap<>();
             for (CatalogProperty incoming : catalog.properties()) {
+                incomingPropertyCodes.add(incoming.supplierPropertyCode());
+                incomingRoomCodesByProperty.put(
+                        incoming.supplierPropertyCode(),
+                        incoming.roomTypes().stream()
+                                .map(CatalogRoomType::supplierRoomTypeCode)
+                                .collect(Collectors.toCollection(LinkedHashSet::new)));
                 PropertyEntity property = propertyRepository
                         .findBySupplierAndSupplierPropertyCode(supplier, incoming.supplierPropertyCode())
                         .orElseGet(PropertyEntity::new);
@@ -248,8 +261,31 @@ public final class MappingStore {
                     }
                 }
             }
+            deactivateMissing(supplier, incomingPropertyCodes, incomingRoomCodesByProperty);
             propertyRepository.flush();
             snapshotHolder.replace(loadReadySnapshot());
+        }
+
+        private void deactivateMissing(
+                String supplier,
+                Set<String> incomingPropertyCodes,
+                Map<String, Set<String>> incomingRoomCodesByProperty) {
+            for (PropertyEntity property : propertyRepository.findBySupplier(supplier)) {
+                if (!incomingPropertyCodes.contains(property.supplierPropertyCode)) {
+                    property.active = false;
+                    for (RoomTypeEntity roomType : property.roomTypes) {
+                        roomType.active = false;
+                    }
+                    continue;
+                }
+                Set<String> incomingRooms = incomingRoomCodesByProperty.getOrDefault(
+                        property.supplierPropertyCode, Set.of());
+                for (RoomTypeEntity roomType : property.roomTypes) {
+                    if (!incomingRooms.contains(roomType.supplierRoomTypeCode)) {
+                        roomType.active = false;
+                    }
+                }
+            }
         }
 
         private MappingSnapshot loadReadySnapshot() {
