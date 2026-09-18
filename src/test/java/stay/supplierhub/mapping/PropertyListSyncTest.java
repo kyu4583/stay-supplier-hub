@@ -37,6 +37,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
+import jakarta.persistence.EntityManager;
 import stay.supplierhub.StaySupplierHubApplication;
 import stay.supplierhub.mapping.MappingStore.MappingSnapshot;
 import stay.supplierhub.search.SupplierContracts.SupplierId;
@@ -103,6 +104,9 @@ class PropertyListSyncTest {
     JdbcTemplate jdbcTemplate;
 
     @Autowired
+    EntityManager entityManager;
+
+    @Autowired
     MockMvc mockMvc;
 
     @DynamicPropertySource
@@ -131,10 +135,17 @@ class PropertyListSyncTest {
 
     @BeforeEach
     void 초기화() {
+        CountDownLatch 이전해제 = 해제.get();
+        if (이전해제 != null) {
+            while (이전해제.getCount() > 0) {
+                이전해제.countDown();
+            }
+        }
         jdbcTemplate.update("delete from mapping_unmapped_code_backoff");
         jdbcTemplate.update("delete from mapping_supplier_readiness");
         jdbcTemplate.update("delete from room_type");
         jdbcTemplate.update("delete from property");
+        entityManager.clear();
         snapshotHolder.replace(MappingSnapshot.unready());
         목록호출수.set(0);
         목록본문.set(숙소목록json(10));
@@ -267,11 +278,24 @@ class PropertyListSyncTest {
         synchronizer.requestForUnmapped(공급사A, "A-10001", "STD");
         호출수가_될때까지_기다린다(1);
         활성숙소가_될때까지_기다린다(10);
-        assertThat(
-                backoffRepository
-                        .findBySupplierAndSupplierPropertyCodeAndSupplierRoomTypeCode("A", "A-10001", "STD")
-                        .isEmpty(),
-                equalTo(true));
+        Instant deadline = Instant.now().plusSeconds(5);
+        Integer 남은백오프 = 1;
+        while (Instant.now().isBefore(deadline)) {
+            entityManager.clear();
+            남은백오프 = jdbcTemplate.queryForObject(
+                    """
+                    select count(*) from mapping_unmapped_code_backoff
+                     where supplier = 'A'
+                       and supplier_property_code = 'A-10001'
+                       and supplier_room_type_code = 'STD'
+                    """,
+                    Integer.class);
+            if (Integer.valueOf(0).equals(남은백오프)) {
+                break;
+            }
+            Thread.sleep(20);
+        }
+        assertThat(남은백오프, equalTo(0));
     }
 
     @Test
@@ -312,7 +336,8 @@ class PropertyListSyncTest {
         Instant deadline = Instant.now().plusSeconds(5);
         while (Instant.now().isBefore(deadline)) {
             if (snapshotHolder.current().ready()
-                    && snapshotHolder.current().activePropertyCodes(공급사A).size() == n) {
+                    && snapshotHolder.current().activePropertyCodes(공급사A).size() == n
+                    && 활성숙소수() == n) {
                 return;
             }
             Thread.sleep(20);

@@ -16,6 +16,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 
 @SpringBootTest
@@ -25,6 +27,11 @@ class StaySearchOpenApiTest {
 
     @Autowired
     MockMvc mockMvc;
+
+    @DynamicPropertySource
+    static void 테스트속성(DynamicPropertyRegistry registry) {
+        registry.add("stay.mapping.sync-on-startup", () -> "false");
+    }
 
     @Test
     @DisplayName("/v3/api-docs 에 availableRooms 비가산성과 0의 뜻이 있다")
