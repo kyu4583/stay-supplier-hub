@@ -10,7 +10,9 @@ import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
+import java.time.Clock;
 import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 @StaySearchPolicy
@@ -37,17 +39,64 @@ record SearchPolicyProperties(int maxNights, int maxCheckInDaysAhead, int maxGue
 
 class StaySearchPolicyValidator implements ConstraintValidator<StaySearchPolicy, StaySearchRequest> {
 
+    private final Clock clock;
+    private final SearchPolicyProperties policy;
+
+    StaySearchPolicyValidator(Clock clock, SearchPolicyProperties policy) {
+        this.clock = clock;
+        this.policy = policy;
+    }
+
     @Override
     public boolean isValid(StaySearchRequest request, ConstraintValidatorContext context) {
-        if (request == null || request.checkIn() == null || request.checkOut() == null) {
-            return true;
-        }
-        if (request.checkOut().isAfter(request.checkIn())) {
+        if (request == null) {
             return true;
         }
         context.disableDefaultConstraintViolation();
-        context.buildConstraintViolationWithTemplate("checkOut must be after checkIn")
-                .addConstraintViolation();
-        return false;
+        boolean valid = true;
+        LocalDate today = LocalDate.now(clock);
+        LocalDate checkIn = request.checkIn();
+        LocalDate checkOut = request.checkOut();
+        Integer adults = request.adults();
+        Integer children = request.children();
+
+        if (checkIn != null && checkOut != null) {
+            long nights = ChronoUnit.DAYS.between(checkIn, checkOut);
+            if (nights < 1) {
+                context.buildConstraintViolationWithTemplate("checkOut must be after checkIn")
+                        .addConstraintViolation();
+                valid = false;
+            } else if (nights > policy.maxNights()) {
+                context.buildConstraintViolationWithTemplate("stay must not exceed max nights")
+                        .addConstraintViolation();
+                valid = false;
+            }
+            if (checkIn.isBefore(today)) {
+                context.buildConstraintViolationWithTemplate("checkIn must not be before today")
+                        .addConstraintViolation();
+                valid = false;
+            }
+            if (ChronoUnit.DAYS.between(today, checkIn) > policy.maxCheckInDaysAhead()) {
+                context.buildConstraintViolationWithTemplate("checkIn must be within max days ahead")
+                        .addConstraintViolation();
+                valid = false;
+            }
+        }
+        if (adults != null && adults < 1) {
+            context.buildConstraintViolationWithTemplate("adults must be at least 1")
+                    .addConstraintViolation();
+            valid = false;
+        }
+        if (children != null && children < 0) {
+            context.buildConstraintViolationWithTemplate("children must be at least 0")
+                    .addConstraintViolation();
+            valid = false;
+        }
+        if (adults != null && children != null && adults + children > policy.maxGuests()) {
+            context.buildConstraintViolationWithTemplate("guest count must not exceed max guests")
+                    .addConstraintViolation();
+            valid = false;
+        }
+        return valid;
     }
 }
