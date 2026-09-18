@@ -31,3 +31,11 @@ stay:
       connect-timeout: 1s
       pending-acquire-timeout: 500ms
       max-connections: 8
+    b:
+      base-url: http://localhost:9091
+      api-key: demo-b-key
+      max-codes-per-call: 50
+      response-timeout: 2s
+      connect-timeout: 1s
+      pending-acquire-timeout: 500ms
+      max-connections: 8
