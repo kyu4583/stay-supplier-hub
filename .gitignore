@@ -20,3 +20,7 @@ build/
 # OS
 .DS_Store
 Thumbs.db
+
+# Agents
+AGENTS.md
+CLAUDE.md
