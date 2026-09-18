@@ -20,6 +20,8 @@ stay:
     max-guests: 36
   mapping:
     sync-on-startup: true
+    sync-interval: 6h
+    shrink-reject-ratio: 0.30
   supplier:
     a:
       base-url: http://localhost:9090

@@ -23,7 +23,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
-import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Component;
 import org.springframework.stereotype.Service;
@@ -32,9 +31,6 @@ import stay.supplierhub.search.SupplierContracts.CatalogProperty;
 import stay.supplierhub.search.SupplierContracts.CatalogRoomType;
 import stay.supplierhub.search.SupplierContracts.SupplierCatalog;
 import stay.supplierhub.search.SupplierContracts.SupplierId;
-
-@ConfigurationProperties(prefix = "stay.mapping")
-record MappingProperties(boolean syncOnStartup) {}
 
 @Entity
 @Table(
