@@ -73,8 +73,10 @@ public final class ChunkedCalls {
         List<ChunkFailure> failures = new ArrayList<>();
         List<UnmappedRoomType> unmapped = new ArrayList<>();
         Set<Integer> finished = new LinkedHashSet<>();
+        boolean anyCallSucceeded = false;
         for (ChunkResult chunk : ordered) {
             finished.add(chunk.index());
+            anyCallSucceeded |= chunk.result().anyCallSucceeded();
             offers.addAll(chunk.result().offers());
             failures.addAll(chunk.result().failures());
             unmapped.addAll(chunk.result().unmappedRoomTypes());
@@ -85,7 +87,7 @@ public final class ChunkedCalls {
             }
         }
         return new SupplierSearchResult(
-                supplier, List.copyOf(offers), List.copyOf(failures), List.copyOf(unmapped));
+                supplier, List.copyOf(offers), List.copyOf(failures), List.copyOf(unmapped), anyCallSucceeded);
     }
 
     private static String reasonOf(Throwable ex) {

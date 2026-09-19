@@ -84,7 +84,16 @@ public final class SupplierContracts {
             SupplierId supplier,
             List<RoomOffer> offers,
             List<ChunkFailure> failures,
-            List<UnmappedRoomType> unmappedRoomTypes) {
+            List<UnmappedRoomType> unmappedRoomTypes,
+            boolean anyCallSucceeded) {
+
+        public SupplierSearchResult(
+                SupplierId supplier,
+                List<RoomOffer> offers,
+                List<ChunkFailure> failures,
+                List<UnmappedRoomType> unmappedRoomTypes) {
+            this(supplier, offers, failures, unmappedRoomTypes, failures.isEmpty());
+        }
 
         public SupplierSearchResult(SupplierId supplier, List<RoomOffer> offers, List<ChunkFailure> failures) {
             this(supplier, offers, failures, List.of());

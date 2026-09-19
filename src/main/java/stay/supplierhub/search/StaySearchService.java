@@ -139,10 +139,8 @@ class DefaultStaySearchService implements StaySearchService {
             if (!result.failures().isEmpty()) {
                 failedSuppliers.add(new FailedSupplierResponse(result.supplier().value()));
                 anyCallFailure = true;
-                if (!result.offers().isEmpty()) {
-                    anySuccessfulCall = true;
-                }
-            } else {
+            }
+            if (result.anyCallSucceeded() || !result.offers().isEmpty()) {
                 anySuccessfulCall = true;
             }
             for (RoomOffer offer : result.offers()) {
