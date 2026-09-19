@@ -85,6 +85,16 @@ class ChunkedCallsTest {
     }
 
     @Test
+    @DisplayName("익명 예외로 실패한 묶음의 사유는 빈 문자열이 아니라 클래스 전체 이름이다")
+    void 익명_예외_사유는_전체이름이다() {
+        RuntimeException 익명예외 = new RuntimeException() {};
+
+        SupplierSearchResult 결과 = 모은다(코드들(1), 1, 8, null, 묶음 -> Mono.error(익명예외));
+
+        assertThat(결과.failures(), equalTo(List.of(new ChunkFailure(공급사, 익명예외.getClass().getName()))));
+    }
+
+    @Test
     @DisplayName("한 묶음이 빈 Mono면 그 묶음만 EMPTY_RESULT 실패다")
     void 빈_묶음은_EMPTY_RESULT다() {
         SupplierSearchResult 결과 = 모은다(코드들(3), 1, 8, null, 묶음 -> 묶음.contains("C002")
