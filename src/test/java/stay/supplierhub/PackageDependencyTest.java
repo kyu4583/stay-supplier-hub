@@ -11,6 +11,7 @@ import com.tngtech.archunit.lang.ArchRule;
 import java.time.Duration;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import stay.supplierhub.search.SupplierContracts.SupplierId;
 
@@ -92,6 +93,33 @@ class PackageDependencyTest {
             .orShould()
             .callMethod(Mono.class, "block", Duration.class)
             .as("SupplierBAdapter 인스턴스 메서드는 block을 호출하지 않는다");
+
+    @ArchTest
+    static final ArchRule ChunkedCalls는_block하지_않는다 = noClasses()
+            .that()
+            .haveSimpleName("ChunkedCalls")
+            .should()
+            .callMethod(Mono.class, "block")
+            .orShould()
+            .callMethod(Mono.class, "block", Duration.class)
+            .orShould()
+            .callMethod(Flux.class, "blockFirst")
+            .orShould()
+            .callMethod(Flux.class, "blockFirst", Duration.class)
+            .orShould()
+            .callMethod(Flux.class, "blockLast")
+            .orShould()
+            .callMethod(Flux.class, "blockLast", Duration.class)
+            .as("ChunkedCalls는 Mono.block과 Flux.blockFirst/blockLast를 호출하지 않는다");
+
+    @ArchTest
+    static final ArchRule search는_supplier_하위_패키지에_의존하지_않는다 = noClasses()
+            .that()
+            .resideInAPackage("stay.supplierhub.search..")
+            .should()
+            .dependOnClassesThat()
+            .resideInAPackage("stay.supplierhub.supplier..")
+            .as("search 패키지는 supplier 하위 어떤 패키지에도 의존하지 않는다");
 
     @Test
     @DisplayName("SupplierId 타입은 enum이 아니다")
