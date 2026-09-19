@@ -6,6 +6,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeoutException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
@@ -46,6 +48,7 @@ record SearchBudgetProperties(Duration budget) {
 @Service
 class DefaultStaySearchService implements StaySearchService {
 
+    private static final Logger log = LoggerFactory.getLogger(DefaultStaySearchService.class);
     private static final Duration BUDGET_GRACE = Duration.ofMillis(250);
 
     private final MappingSnapshotHolder snapshotHolder;
@@ -92,12 +95,15 @@ class DefaultStaySearchService implements StaySearchService {
                             snapshot.knownRoomTypes(port.supplierId()),
                             budget))
                     .timeout(budget.plus(BUDGET_GRACE))
-                    .onErrorResume(ex -> Mono.just(new SupplierSearchResult(
-                            port.supplierId(),
-                            List.of(),
-                            List.of(new ChunkFailure(
-                                    port.supplierId(),
-                                    ex instanceof TimeoutException ? "BUDGET_EXCEEDED" : "UNAVAILABLE"))))));
+                    .onErrorResume(ex -> {
+                        log.warn("supplier call aborted supplier={}", port.supplierId().value(), ex);
+                        return Mono.just(new SupplierSearchResult(
+                                port.supplierId(),
+                                List.of(),
+                                List.of(new ChunkFailure(
+                                        port.supplierId(),
+                                        ex instanceof TimeoutException ? "BUDGET_EXCEEDED" : "UNAVAILABLE"))));
+                    }));
         }
 
         List<SupplierSearchResult> resolved = List.of();
@@ -106,6 +112,12 @@ class DefaultStaySearchService implements StaySearchService {
             resolved = results == null ? List.of() : results;
         }
         for (SupplierSearchResult result : resolved) {
+            if (!result.failures().isEmpty()) {
+                log.warn(
+                        "supplier partial failure supplier={} reasons={}",
+                        result.supplier().value(),
+                        result.failures().stream().map(ChunkFailure::reason).toList());
+            }
             for (UnmappedRoomType unmapped : result.unmappedRoomTypes()) {
                 synchronizer.requestForUnmapped(
                         result.supplier(), unmapped.supplierPropertyCode(), unmapped.supplierRoomTypeCode());
