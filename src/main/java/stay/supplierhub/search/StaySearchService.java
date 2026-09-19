@@ -1,9 +1,12 @@
 package stay.supplierhub.search;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeoutException;
+import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -30,20 +33,28 @@ public interface StaySearchService {
     StaySearchResponse search(StaySearchRequest request);
 }
 
+@ConfigurationProperties(prefix = "stay.search")
+record SearchBudgetProperties(Duration budget) {}
+
 @Service
 class DefaultStaySearchService implements StaySearchService {
+
+    private static final Duration BUDGET_GRACE = Duration.ofMillis(250);
 
     private final MappingSnapshotHolder snapshotHolder;
     private final List<SupplierAvailabilityPort> availabilityPorts;
     private final PropertyListSynchronizer synchronizer;
+    private final Duration budget;
 
     DefaultStaySearchService(
             MappingSnapshotHolder snapshotHolder,
             List<SupplierAvailabilityPort> availabilityPorts,
-            PropertyListSynchronizer synchronizer) {
+            PropertyListSynchronizer synchronizer,
+            SearchBudgetProperties budgetProperties) {
         this.snapshotHolder = snapshotHolder;
         this.availabilityPorts = List.copyOf(availabilityPorts);
         this.synchronizer = synchronizer;
+        this.budget = budgetProperties.budget();
     }
 
     @Override
@@ -71,11 +82,15 @@ class DefaultStaySearchService implements StaySearchService {
                             request.checkOut(),
                             request.adults(),
                             request.children(),
-                            snapshot.knownRoomTypes(port.supplierId())))
+                            snapshot.knownRoomTypes(port.supplierId()),
+                            budget))
+                    .timeout(budget.plus(BUDGET_GRACE))
                     .onErrorResume(ex -> Mono.just(new SupplierSearchResult(
                             port.supplierId(),
                             List.of(),
-                            List.of(new ChunkFailure(port.supplierId(), "UNAVAILABLE"))))));
+                            List.of(new ChunkFailure(
+                                    port.supplierId(),
+                                    ex instanceof TimeoutException ? "BUDGET_EXCEEDED" : "UNAVAILABLE"))))));
         }
 
         List<SupplierSearchResult> resolved = List.of();
