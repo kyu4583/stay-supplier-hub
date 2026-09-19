@@ -30,7 +30,8 @@ stay:
       response-timeout: 2s
       connect-timeout: 1s
       pending-acquire-timeout: 500ms
-      max-connections: 8
+      max-connections: 2500
+      max-concurrent-calls: 8
     b:
       base-url: http://localhost:9091
       api-key: demo-b-key
@@ -38,4 +39,5 @@ stay:
       response-timeout: 2s
       connect-timeout: 1s
       pending-acquire-timeout: 500ms
-      max-connections: 8
+      max-connections: 2500
+      max-concurrent-calls: 8
