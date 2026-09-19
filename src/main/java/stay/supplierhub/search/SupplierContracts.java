@@ -1,5 +1,6 @@
 package stay.supplierhub.search;
 
+import java.time.Duration;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
@@ -39,11 +40,26 @@ public final class SupplierContracts {
             LocalDate checkOut,
             int adults,
             int children,
-            Set<RoomTypeKey> knownRoomTypes) {
+            Set<RoomTypeKey> knownRoomTypes,
+            Duration budget) {
 
         public AvailabilityQuery(
                 List<String> hotelCodes, LocalDate checkIn, LocalDate checkOut, int adults, int children) {
             this(hotelCodes, checkIn, checkOut, adults, children, Set.of());
+        }
+
+        public AvailabilityQuery(
+                List<String> hotelCodes,
+                LocalDate checkIn,
+                LocalDate checkOut,
+                int adults,
+                int children,
+                Set<RoomTypeKey> knownRoomTypes) {
+            this(hotelCodes, checkIn, checkOut, adults, children, knownRoomTypes, null);
+        }
+
+        public AvailabilityQuery withHotelCodes(List<String> codes) {
+            return new AvailabilityQuery(codes, checkIn, checkOut, adults, children, knownRoomTypes, budget);
         }
     }
 
