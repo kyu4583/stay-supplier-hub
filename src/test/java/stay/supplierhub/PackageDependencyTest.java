@@ -55,6 +55,44 @@ class PackageDependencyTest {
             .callMethod(Mono.class, "block", Duration.class)
             .as("SupplierAAdapter 인스턴스 메서드는 block을 호출하지 않는다");
 
+    @ArchTest
+    static final ArchRule search는_supplier_b에_의존하지_않는다 = noClasses()
+            .that()
+            .resideInAPackage("stay.supplierhub.search..")
+            .should()
+            .dependOnClassesThat()
+            .resideInAPackage("stay.supplierhub.supplier.b..")
+            .as("search 패키지는 supplier.b에 의존하지 않는다");
+
+    @ArchTest
+    static final ArchRule mapping은_supplier_b에_의존하지_않는다 = noClasses()
+            .that()
+            .resideInAPackage("stay.supplierhub.mapping..")
+            .should()
+            .dependOnClassesThat()
+            .resideInAPackage("stay.supplierhub.supplier.b..")
+            .as("mapping 패키지는 supplier.b에 의존하지 않는다");
+
+    @ArchTest
+    static final ArchRule B매퍼는_HTTP와_Reactor를_모른다 = noClasses()
+            .that()
+            .haveSimpleName("SupplierBMapper")
+            .should()
+            .dependOnClassesThat()
+            .resideInAnyPackage(
+                    "org.springframework.web.reactive.function.client..", "reactor.core.publisher..")
+            .as("SupplierBMapper는 WebClient와 Reactor를 쓰지 않는다");
+
+    @ArchTest
+    static final ArchRule B어댑터는_block하지_않는다 = noClasses()
+            .that()
+            .haveSimpleName("SupplierBAdapter")
+            .should()
+            .callMethod(Mono.class, "block")
+            .orShould()
+            .callMethod(Mono.class, "block", Duration.class)
+            .as("SupplierBAdapter 인스턴스 메서드는 block을 호출하지 않는다");
+
     @Test
     @DisplayName("SupplierId 타입은 enum이 아니다")
     void SupplierId는_enum이_아니다() {
