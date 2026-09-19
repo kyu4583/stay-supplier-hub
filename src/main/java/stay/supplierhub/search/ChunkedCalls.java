@@ -63,7 +63,7 @@ public final class ChunkedCalls {
         return Mono.defer(() -> callPerChunk.apply(chunk))
                 .map(result -> new ChunkResult(index, result))
                 .defaultIfEmpty(new ChunkResult(index, failed(supplier, EMPTY_RESULT)))
-                .onErrorResume(ex -> Mono.just(new ChunkResult(index, failed(supplier, ex.getClass().getSimpleName()))));
+                .onErrorResume(ex -> Mono.just(new ChunkResult(index, failed(supplier, reasonOf(ex)))));
     }
 
     private static SupplierSearchResult merge(SupplierId supplier, int chunkCount, List<ChunkResult> done) {
@@ -86,6 +86,11 @@ public final class ChunkedCalls {
         }
         return new SupplierSearchResult(
                 supplier, List.copyOf(offers), List.copyOf(failures), List.copyOf(unmapped));
+    }
+
+    private static String reasonOf(Throwable ex) {
+        String simpleName = ex.getClass().getSimpleName();
+        return simpleName.isEmpty() ? ex.getClass().getName() : simpleName;
     }
 
     private static SupplierSearchResult failed(SupplierId supplier, String reason) {
