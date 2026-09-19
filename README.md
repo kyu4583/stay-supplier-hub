@@ -43,6 +43,92 @@ OpenAPI는 SpringDoc 기본 경로입니다.
 - UI: http://localhost:8080/swagger-ui.html
 - JSON: http://localhost:8080/v3/api-docs
 
+### Mock 모드
+
+Mock A와 Mock B는 기동 옵션으로 장애를 재현합니다. 옵션 이름은 두 Mock이 같고, 옵션 없이 띄우면 위의 정상 동작입니다. 실행 중에는 모드를 바꿀 수 없으니 Mock을 다시 띄웁니다.
+
+| 옵션 | 값 (기본값) | Mock A | Mock B |
+|---|---|---|---|
+| `mock.mode` | `normal` (기본) | 정상 응답 | 정상 응답 |
+| | `outage` | 검색에 HTTP 503 `SERVICE_UNAVAILABLE` | 검색에 HTTP 200 + `E503` `TEMPORARILY_UNAVAILABLE`, `data` null |
+| | `no-response` | 검색에 60초 넘게 응답하지 않음 | 같음 |
+| | `delay` | `mock.delay`만큼 기다린 뒤 정상 응답 | 같음 |
+| `mock.delay` | 기간 (`2500ms`) | `delay` 모드의 지연 | 같음 |
+| `mock.catalog-mode` | `normal` (기본), `outage` | 숙소 목록에 HTTP 503 `SERVICE_UNAVAILABLE` | 숙소 목록에 HTTP 200 + `E503`, `data` null |
+| `mock.extra-properties` | 0~9999 (`0`) | `A-20001`부터 N개 숙소 추가 | `B90001`부터 N개 숙소 추가 |
+| `mock.fault-codes` | 쉼표로 구분한 숙소 코드 (빈 값) | 이 코드가 든 검색 요청에만 `mock.mode` 적용 | 같음 |
+
+두 Mock 모두 검색 코드가 50개를 넘으면 스펙대로 거절합니다. A는 HTTP 400 `TOO_MANY_HOTEL_CODES`, B는 `E400` `TOO_MANY_PROPERTY_IDS`입니다. 앱이 50개씩 나눠 부르지 않으면 숙소 추가 시연에서 바로 드러납니다.
+
+`mock.catalog-mode`와 `mock.extra-properties`는 앱이 숙소 목록을 받을 때(기동 시 동기화, `POST /internal/mapping/sync`) 반영됩니다. 매핑 준비 상태는 `./data`에 남으므로, 목록 장애를 보이거나 숙소 수를 줄일 때는 앱을 끄고 `./data`를 지운 뒤 다시 띄웁니다.
+
+아래는 시연 명령과 위 검색 예시로 보이는 결과입니다. 바꾸지 않는 쪽 Mock은 옵션 없이 띄웁니다. B도 같은 옵션으로 같은 시연을 할 수 있습니다.
+
+정상:
+
+```text
+.\gradlew.bat :mock-a:bootRun
+.\gradlew.bat :mock-b:bootRun
+```
+
+결과: 200, `failedSuppliers` 비어 있음.
+
+장애:
+
+```text
+.\gradlew.bat :mock-a:bootRun --args='--mock.mode=outage'
+```
+
+결과: 200, B 결과만 오고 `failedSuppliers`에 A.
+
+무응답:
+
+```text
+.\gradlew.bat :mock-a:bootRun --args='--mock.mode=no-response'
+```
+
+결과: 호출별 응답 타임아웃 2초 뒤 200, `failedSuppliers`에 A. `:mock-b:bootRun`도 같은 옵션으로 띄워 모두 무응답이면 약 3초 안에 503.
+
+지연:
+
+```text
+.\gradlew.bat :mock-a:bootRun --args='--mock.mode=delay --mock.delay=1500ms'
+.\gradlew.bat :mock-a:bootRun --args='--mock.mode=delay --mock.delay=2500ms'
+```
+
+결과: 1500ms는 약 1.5초 뒤 200, A 결과 포함. 2500ms는 호출별 응답 타임아웃 2초에 걸려 200, `failedSuppliers`에 A.
+
+목록 장애 (앱을 끄고 `./data`를 지운 뒤 다시 띄움):
+
+```text
+.\gradlew.bat :mock-a:bootRun --args='--mock.catalog-mode=outage'
+```
+
+결과: A 매핑이 준비되지 않아 200, `failedSuppliers`에 A.
+
+숙소 50개 초과:
+
+```text
+.\gradlew.bat :mock-a:bootRun --args='--mock.extra-properties=120'
+.\gradlew.bat :mock-b:bootRun --args='--mock.extra-properties=120'
+```
+
+결과: 앱 동기화 뒤 200, A 122개·B 121개 숙소가 50개씩 세 묶음으로 조회되어 모두 나오고 `failedSuppliers` 비어 있음.
+
+일부 묶음만 실패:
+
+```text
+.\gradlew.bat :mock-a:bootRun --args='--mock.extra-properties=120 --mock.mode=outage --mock.fault-codes=A-20060'
+```
+
+결과: 200, `--mock.fault-codes=A-20060`으로 지정한 숙소가 든 묶음만 빠지고 나머지 A 오퍼는 나오며 `failedSuppliers`에 A.
+
+```text
+.\gradlew.bat :mock-b:bootRun --args='--mock.extra-properties=120 --mock.mode=outage --mock.fault-codes=B90060'
+```
+
+결과: 200, `B90060`이 든 묶음만 빠지고 나머지 B 오퍼는 나오며 `failedSuppliers`에 B.
+
 ## 연동의 성격
 
 두 공급사는 같은 숙박 상품을 팔지만 표현이 다릅니다.
@@ -108,13 +194,21 @@ OpenAPI는 SpringDoc 기본 경로입니다.
 
 | 값 | 의미 | 정한 근거 |
 |---|---|---|
-| 3초 | 검색 한 건의 전체 시간 예산 | 검색 화면이 기다릴 수 있는 한도에서 역산 |
-| 2초 / 1초 / 0.5초 | 호출별 응답 / 연결 / 커넥션 획득 대기 | 전체 예산 안에서 나눔 |
-| 8 | 검색 한 건 안에서 공급사별 동시 호출 수 | 공급사 수용량을 모르는 상태의 초기값 |
+| 3초 | 검색 한 건의 전체 시간 예산 (`stay.search.budget`) | 검색 화면이 기다릴 수 있는 한도에서 역산 |
+| 2초 | 호출별 응답 타임아웃 (`stay.supplier.{a,b}.response-timeout`) | 전체 예산 안에서 나눔 |
+| 1초 | 연결 타임아웃 (`stay.supplier.{a,b}.connect-timeout`) | 정상 연결은 수십 ms라 넘으면 경로 문제로 봄 |
+| 0.5초 | 커넥션 획득 대기 (`stay.supplier.{a,b}.pending-acquire-timeout`) | 요청을 보내기 전 단계라 길게 기다릴 이유가 없음 |
+| 50 | 호출 한 번에 담는 숙소 코드 수 (`stay.supplier.{a,b}.max-codes-per-call`) | 공급사 API 한도 |
+| 8 | 검색 한 건 안에서 공급사별 동시 호출 수 (`stay.supplier.{a,b}.max-concurrent-calls`) | 공급사 수용량을 모르는 상태의 초기값. 전역 제한이 아님 |
+| 2,500 | 공급사별 아웃바운드 커넥션 풀 상한 (`stay.supplier.{a,b}.max-connections`) | 높은 아웃바운드 동시성을 위한 초기 목표. 부하 검증 전 |
 | 6시간 | 숙소 목록 동기화 주기 | 정적 데이터이고 한 번 호출이 전체 목록임 |
 | 3·10·30·90·270분 | 같은 코드로 동기화를 다시 시도하기까지의 대기 | 잠깐 늦은 반영은 앞 단계에서 따라잡고, 계속 어긋나면 호출이 빠르게 줄도록 |
 | 30% | 목록이 이만큼 줄면 그 동기화를 반영하지 않음 | 공급사 쪽 결함으로 대량 비활성되는 사고 방지 |
 | 30박 / 180일 / 36명 | 검색 요청의 상한 | 널리 쓰이는 숙박 앱의 검색 범위를 참고 |
+
+타임아웃 네 값은 공급사 응답 실측이 없어 측정값이 아니라 검색 화면이 기다릴 수 있는 한도에서 역산했습니다. 호출별 값의 합 3.5초가 예산 3초보다 큰 것은 의도한 것입니다. 전체 예산이 마지막 방어선이고 나머지는 그보다 빨리 끊는 장치입니다. 공급사가 무응답이면 묶음마다 2초씩 기다려 동시 8개로 30묶음이면 8초가 걸리므로, 예산이 끊어야 부분 실패 허용이 실제로 동작합니다.
+
+동시 호출 8과 풀 상한 2,500도 측정값이 아니며, 실제 데이터와 부하 검증 뒤 조정할 대상입니다.
 
 ## 문서
 
