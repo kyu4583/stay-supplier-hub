@@ -18,6 +18,7 @@ stay:
     max-nights: 30
     max-check-in-days-ahead: 180
     max-guests: 36
+    budget: 3s
   mapping:
     sync-on-startup: true
     sync-interval: 6h
