@@ -187,8 +187,12 @@ class StaySearchABIntegrationTest {
     static void 테스트속성(DynamicPropertyRegistry registry) {
         registry.add("stay.supplier.a.base-url", () -> 공급사A.url("/").toString().replaceAll("/$", ""));
         registry.add("stay.supplier.a.api-key", () -> "demo-a-key");
+        registry.add("stay.supplier.a.response-timeout", () -> "200ms");
+        registry.add("stay.supplier.a.connect-timeout", () -> "200ms");
         registry.add("stay.supplier.b.base-url", () -> 공급사B.url("/").toString().replaceAll("/$", ""));
         registry.add("stay.supplier.b.api-key", () -> B키);
+        registry.add("stay.supplier.b.response-timeout", () -> "200ms");
+        registry.add("stay.supplier.b.connect-timeout", () -> "200ms");
         registry.add("stay.mapping.sync-on-startup", () -> "false");
         registry.add(
                 "spring.datasource.url",
@@ -358,6 +362,31 @@ class StaySearchABIntegrationTest {
                 .andExpect(jsonPath("$.failedSuppliers[*].supplier", hasItems("A", "B")))
                 .andExpect(jsonPath("$.failedSuppliers[0].reason").doesNotExist())
                 .andExpect(header().doesNotExist("Retry-After"));
+    }
+
+    @Test
+    @DisplayName("A availability HTTP 500이고 B가 성공이면 200이고 failedSuppliers는 A다")
+    void A실패_B성공은_200에_failedA() throws Exception {
+        공급사A.setDispatcher(new Dispatcher() {
+            @Override
+            public MockResponse dispatch(RecordedRequest request) {
+                if ("/a/v1/availability".equals(request.getRequestUrl().encodedPath())) {
+                    return new MockResponse().setResponseCode(500).setBody("{\"error\":\"down\"}");
+                }
+                return new MockResponse().setResponseCode(404);
+            }
+        });
+        String json = 검색한다()
+                .andExpect(status().isOk())
+                .andExpect(header().doesNotExist("Retry-After"))
+                .andExpect(jsonPath("$.failedSuppliers.length()").value(1))
+                .andExpect(jsonPath("$.failedSuppliers[0].supplier").value("A"))
+                .andExpect(jsonPath("$.failedSuppliers[0].reason").doesNotExist())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        assertThat(json, not(containsString("\"status\":500")));
+        공급사오퍼(json, "B", 452000L);
     }
 
     @Test

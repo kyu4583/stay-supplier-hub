@@ -2,9 +2,13 @@ package stay.supplierhub.api;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.not;
+import static org.hamcrest.Matchers.notNullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -12,9 +16,11 @@ import com.jayway.jsonpath.JsonPath;
 import java.io.IOException;
 import java.time.Clock;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import okhttp3.mockwebserver.Dispatcher;
 import okhttp3.mockwebserver.MockResponse;
@@ -30,14 +36,18 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
+import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import stay.supplierhub.mapping.MappingStore;
+import stay.supplierhub.search.SupplierContracts.AvailabilityQuery;
+import stay.supplierhub.search.SupplierContracts.SupplierAvailabilityPort;
 import stay.supplierhub.search.SupplierContracts.SupplierCatalog;
 import stay.supplierhub.search.SupplierContracts.SupplierCatalogPort;
 import stay.supplierhub.search.SupplierContracts.SupplierId;
+import stay.supplierhub.search.SupplierContracts.SupplierSearchResult;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -125,14 +135,21 @@ class StaySearchAIntegrationTest {
     List<SupplierCatalogPort> catalogPorts;
 
     @Autowired
+    List<SupplierAvailabilityPort> availabilityPorts;
+
+    @Autowired
     JdbcTemplate jdbcTemplate;
 
     @DynamicPropertySource
     static void 테스트속성(DynamicPropertyRegistry registry) {
         registry.add("stay.supplier.a.base-url", () -> 공급사A.url("/").toString().replaceAll("/$", ""));
         registry.add("stay.supplier.a.api-key", () -> "demo-a-key");
+        registry.add("stay.supplier.a.response-timeout", () -> "200ms");
+        registry.add("stay.supplier.a.connect-timeout", () -> "200ms");
         registry.add("stay.supplier.b.base-url", () -> 공급사A.url("/").toString().replaceAll("/$", ""));
         registry.add("stay.supplier.b.api-key", () -> "demo-b-key");
+        registry.add("stay.supplier.b.response-timeout", () -> "200ms");
+        registry.add("stay.supplier.b.connect-timeout", () -> "200ms");
         registry.add("stay.mapping.sync-on-startup", () -> "false");
         registry.add(
                 "spring.datasource.url",
@@ -267,6 +284,42 @@ class StaySearchAIntegrationTest {
         assertThat(스냅샷매핑.maxOccupancy(), equalTo(2));
     }
 
+    @Test
+    @DisplayName("A-only에서 availability HTTP 500은 503 problem+json 이고 failedSuppliers는 A다")
+    void A만_HTTP_500이면_503이다() throws Exception {
+        A만_참가시킨다();
+        공급사A재고를(new MockResponse().setResponseCode(500).setBody("{\"error\":\"down\"}"));
+        SupplierSearchResult 어댑터결과 = 공급사A가용성().fetchAvailability(A검색조건()).block();
+        assertThat(어댑터결과, notNullValue());
+        assertThat(어댑터결과.failures(), not(empty()));
+        assertThat(어댑터결과.failures().getFirst().supplier().value(), equalTo("A"));
+        A호출실패_503을_검증한다();
+    }
+
+    @Test
+    @DisplayName("A-only에서 availability HTTP 401은 503이고 failedSuppliers는 A다")
+    void A만_HTTP_401이면_503이다() throws Exception {
+        A만_참가시킨다();
+        공급사A재고를(new MockResponse().setResponseCode(401).setBody("{\"error\":\"unauthorized\"}"));
+        A호출실패_503을_검증한다();
+    }
+
+    @Test
+    @DisplayName("A-only에서 availability 본문이 JSON이 아니면 503이고 failedSuppliers는 A다")
+    void A만_비JSON이면_503이다() throws Exception {
+        A만_참가시킨다();
+        공급사A재고를(new MockResponse().setHeader("Content-Type", "text/plain").setBody("not-json"));
+        A호출실패_503을_검증한다();
+    }
+
+    @Test
+    @DisplayName("A-only에서 availability가 response-timeout보다 길면 503이고 failedSuppliers는 A다")
+    void A만_응답지연이면_503이다() throws Exception {
+        A만_참가시킨다();
+        공급사A재고를(json응답(재고요금본문).setHeadersDelay(400, TimeUnit.MILLISECONDS));
+        A호출실패_503을_검증한다();
+    }
+
     @SuppressWarnings("unchecked")
     private static <T> T 숙소필드(String json, String 숙소명, String 상대경로) {
         Object value = JsonPath.read(json, "$.properties[?(@.propertyName == '" + 숙소명 + "')]." + 상대경로);
@@ -274,6 +327,61 @@ class StaySearchAIntegrationTest {
             return (T) list.getFirst();
         }
         return (T) value;
+    }
+
+    private void A호출실패_503을_검증한다() throws Exception {
+        String json = mockMvc.perform(get(검색경로)
+                        .param("checkIn", "2026-09-20")
+                        .param("checkOut", "2026-09-23")
+                        .param("adults", "2")
+                        .param("children", "0"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.status").value(503))
+                .andExpect(jsonPath("$.failedSuppliers.length()").value(1))
+                .andExpect(jsonPath("$.failedSuppliers[0].supplier").value("A"))
+                .andExpect(jsonPath("$.failedSuppliers[0].reason").doesNotExist())
+                .andExpect(header().doesNotExist("Retry-After"))
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        assertThat(json, not(containsString("\"status\":500")));
+    }
+
+    private void A만_참가시킨다() {
+        snapshotHolder.replace(MappingStore.MappingSnapshot.explicit(
+                snapshotHolder.current().properties(),
+                Set.of(new SupplierId("A")),
+                Set.of()));
+    }
+
+    private void 공급사A재고를(MockResponse 응답) {
+        공급사A.setDispatcher(new Dispatcher() {
+            @Override
+            public MockResponse dispatch(RecordedRequest request) {
+                if ("/a/v1/availability".equals(request.getRequestUrl().encodedPath())) {
+                    return 응답;
+                }
+                return new MockResponse().setResponseCode(404);
+            }
+        });
+    }
+
+    private AvailabilityQuery A검색조건() {
+        return new AvailabilityQuery(
+                List.of("A-10023"),
+                LocalDate.of(2026, 9, 20),
+                LocalDate.of(2026, 9, 23),
+                2,
+                0,
+                snapshotHolder.current().knownRoomTypes(new SupplierId("A")));
+    }
+
+    private SupplierAvailabilityPort 공급사A가용성() {
+        return availabilityPorts.stream()
+                .filter(port -> "A".equals(port.supplierId().value()))
+                .findFirst()
+                .orElseThrow();
     }
 
     private SupplierCatalogPort 공급사A카탈로그() {

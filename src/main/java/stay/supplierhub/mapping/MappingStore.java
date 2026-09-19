@@ -179,6 +179,10 @@ public final class MappingStore {
             return readiness != Readiness.ALL_UNREADY;
         }
 
+        public List<MappedProperty> properties() {
+            return properties;
+        }
+
         public boolean isReady(SupplierId supplier) {
             return switch (readiness) {
                 case ALL_UNREADY -> false;
