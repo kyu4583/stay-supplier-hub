@@ -251,7 +251,6 @@ public final class MappingSync {
                             supplier, property.supplierPropertyCode(), roomType.supplierRoomTypeCode());
                 }
             }
-            snapshotHolder.replace(loadReadySnapshot());
         }
 
         private MappingSnapshot loadReadySnapshot() {

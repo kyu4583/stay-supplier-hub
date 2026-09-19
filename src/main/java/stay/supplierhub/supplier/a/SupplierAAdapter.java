@@ -292,17 +292,21 @@ public class SupplierAAdapter implements SupplierCatalogPort, SupplierAvailabili
                             try {
                                 parsed = JSON_MAPPER.readValue(json, SupplierAAvailabilityResponse.class);
                             } catch (RuntimeException ex) {
-                                return Mono.error(ex);
+                                return failed("PARSE_ERROR");
                             }
                             if (!response.statusCode().is2xxSuccessful()) {
-                                return Mono.error(new IllegalStateException(
-                                        "supplier A availability failed: " + response.statusCode()));
+                                return failed("HTTP_" + response.statusCode().value());
                             }
                             if (parsed.items() == null) {
-                                return Mono.error(
-                                        new IllegalStateException("supplier A availability payload is invalid"));
+                                return failed("INVALID_RESPONSE");
                             }
                             return Mono.just(mapper.toSearchResult(parsed, query));
-                        }));
+                        }))
+                .onErrorResume(ex -> failed(ex.getClass().getSimpleName()));
+    }
+
+    private Mono<SupplierSearchResult> failed(String reason) {
+        return Mono.just(new SupplierSearchResult(
+                supplierId(), List.of(), List.of(new ChunkFailure(supplierId(), reason))));
     }
 }

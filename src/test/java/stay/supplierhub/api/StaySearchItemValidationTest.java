@@ -17,6 +17,7 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import okhttp3.mockwebserver.Dispatcher;
@@ -41,6 +42,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import stay.supplierhub.mapping.MappingStore;
 import stay.supplierhub.search.SupplierContracts.SupplierCatalog;
 import stay.supplierhub.search.SupplierContracts.SupplierCatalogPort;
+import stay.supplierhub.search.SupplierContracts.SupplierId;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -155,6 +157,9 @@ class StaySearchItemValidationTest {
     MappingStore.MappingUpsertService mappingUpsertService;
 
     @Autowired
+    MappingStore.MappingSnapshotHolder snapshotHolder;
+
+    @Autowired
     List<SupplierCatalogPort> catalogPorts;
 
     @Autowired
@@ -205,6 +210,10 @@ class StaySearchItemValidationTest {
         });
         SupplierCatalog catalog = 공급사A카탈로그().fetchCatalog().block();
         mappingUpsertService.apply(catalog);
+        snapshotHolder.replace(MappingStore.MappingSnapshot.explicit(
+                snapshotHolder.current().properties(),
+                Set.of(new SupplierId("A")),
+                Set.of()));
         jdbcTemplate.update("delete from mapping_unmapped_code_backoff");
         while (공급사A.takeRequest(1, TimeUnit.MILLISECONDS) != null) {
             // 목록 조회 기록을 비워 검색 요청만 남긴다
