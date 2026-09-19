@@ -10,7 +10,7 @@
 
 Java 25가 필요합니다. 저장소 루트에서 실행합니다.
 
-시연 Mock A를 먼저 띄운 뒤 앱을 띄웁니다. Mock A는 9090, 앱은 8080입니다. 단일 인스턴스 가정입니다.
+시연 Mock A와 Mock B를 먼저 띄운 뒤 앱을 띄웁니다. Mock A는 9090, Mock B는 9091, 앱은 8080입니다. 단일 인스턴스 가정입니다.
 
 ```text
 .\gradlew.bat :mock-a:bootRun
@@ -19,17 +19,23 @@ Java 25가 필요합니다. 저장소 루트에서 실행합니다.
 다른 터미널에서:
 
 ```text
+.\gradlew.bat :mock-b:bootRun
+```
+
+세 번째 터미널에서:
+
+```text
 .\gradlew.bat bootRun
 ```
 
-기본 포트는 8080입니다. 앱은 `http://localhost:9090`의 Mock A를 호출합니다.
+기본 포트는 8080입니다. 앱은 `http://localhost:9090`의 Mock A와 `http://localhost:9091`의 Mock B를 호출합니다.
 
 숙소 목록을 수동으로 다시 받으려면 `POST /internal/mapping/sync`를 씁니다. 로컬 관리용이며 인증이 없습니다.
 
 검색 예시:
 
 ```text
-GET http://localhost:8080/api/v1/stays/search?checkIn=2026-09-01&checkOut=2026-09-04&adults=2&children=0
+GET http://localhost:8080/api/v1/stays/search?checkIn=2026-09-20&checkOut=2026-09-23&adults=2&children=0
 ```
 
 OpenAPI는 SpringDoc 기본 경로입니다.
