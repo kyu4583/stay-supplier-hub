@@ -48,7 +48,20 @@ record SupplierAProperties(
         Duration connectTimeout,
         Duration pendingAcquireTimeout,
         int maxConnections,
-        int maxConcurrentCalls) {}
+        int maxConcurrentCalls) {
+
+    SupplierAProperties {
+        requirePositive("max-codes-per-call", maxCodesPerCall);
+        requirePositive("max-connections", maxConnections);
+        requirePositive("max-concurrent-calls", maxConcurrentCalls);
+    }
+
+    private static void requirePositive(String key, int value) {
+        if (value < 1) {
+            throw new IllegalArgumentException("stay.supplier.a." + key + " must be positive: " + value);
+        }
+    }
+}
 
 record SupplierAHotelsResponse(List<SupplierAHotel> items) {}
 

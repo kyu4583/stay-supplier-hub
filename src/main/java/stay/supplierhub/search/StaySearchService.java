@@ -34,7 +34,14 @@ public interface StaySearchService {
 }
 
 @ConfigurationProperties(prefix = "stay.search")
-record SearchBudgetProperties(Duration budget) {}
+record SearchBudgetProperties(Duration budget) {
+
+    SearchBudgetProperties {
+        if (budget == null || budget.isZero() || budget.isNegative()) {
+            throw new IllegalArgumentException("stay.search.budget must be positive: " + budget);
+        }
+    }
+}
 
 @Service
 class DefaultStaySearchService implements StaySearchService {

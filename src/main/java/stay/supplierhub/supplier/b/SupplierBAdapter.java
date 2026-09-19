@@ -48,7 +48,20 @@ record SupplierBProperties(
         Duration connectTimeout,
         Duration pendingAcquireTimeout,
         int maxConnections,
-        int maxConcurrentCalls) {}
+        int maxConcurrentCalls) {
+
+    SupplierBProperties {
+        requirePositive("max-codes-per-call", maxCodesPerCall);
+        requirePositive("max-connections", maxConnections);
+        requirePositive("max-concurrent-calls", maxConcurrentCalls);
+    }
+
+    private static void requirePositive(String key, int value) {
+        if (value < 1) {
+            throw new IllegalArgumentException("stay.supplier.b." + key + " must be positive: " + value);
+        }
+    }
+}
 
 record SupplierBPropertiesEnvelope(String resultCode, String resultMessage, SupplierBPropertiesData data) {}
 
