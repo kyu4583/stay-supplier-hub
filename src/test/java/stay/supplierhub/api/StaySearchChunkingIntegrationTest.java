@@ -1,6 +1,7 @@
 package stay.supplierhub.api;
 
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.hasItem;
@@ -305,6 +306,21 @@ class StaySearchChunkingIntegrationTest {
                 .andExpect(jsonPath("$.failedSuppliers.length()").value(1))
                 .andExpect(jsonPath("$.failedSuppliers[0].supplier").value("A"))
                 .andExpect(jsonPath("$.failedSuppliers[0].reason").doesNotExist());
+    }
+
+    @Test
+    @DisplayName("A 한 묶음만 실패하고 나머지 A 묶음이 정상 빈 결과이면 B가 전부 실패해도 503이 아니라 200 빈 결과다")
+    void A_빈정상묶음이_있으면_B전부실패여도_200이다() throws Exception {
+        공급사A재고를(codes -> codes.contains(A표식코드)
+                ? new MockResponse().setResponseCode(500).setBody("{\"error\":\"down\"}")
+                : json응답("{\"items\":[]}"));
+        공급사B재고를(codes -> json응답(B장애본문));
+
+        검색한다()
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.properties.length()").value(0))
+                .andExpect(jsonPath("$.failedSuppliers.length()").value(2))
+                .andExpect(jsonPath("$.failedSuppliers[*].supplier", containsInAnyOrder("A", "B")));
     }
 
     private void A만_참가시킨다() {
