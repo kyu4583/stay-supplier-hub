@@ -3,9 +3,12 @@ package stay.supplierhub.api;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.hasItems;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -31,6 +34,7 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
+import org.springframework.http.MediaType;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
@@ -146,6 +150,14 @@ class StaySearchABIntegrationTest {
               }
             }
             """;
+    private static final String B장애본문 =
+            """
+            {
+              "resultCode": "E503",
+              "resultMessage": "TEMPORARILY_UNAVAILABLE",
+              "data": null
+            }
+            """;
 
     private static final MockWebServer 공급사A = new MockWebServer();
     private static final MockWebServer 공급사B = new MockWebServer();
@@ -164,6 +176,9 @@ class StaySearchABIntegrationTest {
 
     @Autowired
     MappingStore.MappingUpsertService mappingUpsertService;
+
+    @Autowired
+    MappingStore.MappingSnapshotHolder snapshotHolder;
 
     @Autowired
     List<SupplierCatalogPort> catalogPorts;
@@ -281,6 +296,83 @@ class StaySearchABIntegrationTest {
         assertThat(B검색.getHeader("Authorization"), equalTo(null));
     }
 
+    @Test
+    @DisplayName("B만 resultCode E503이면 200이고 A 오퍼가 있으며 failedSuppliers는 B다")
+    void B만_실패하면_200에_A와_failedB() throws Exception {
+        공급사B검색을(json응답(B장애본문));
+        String json = 검색한다()
+                .andExpect(status().isOk())
+                .andExpect(header().doesNotExist("Retry-After"))
+                .andExpect(jsonPath("$.failedSuppliers.length()").value(1))
+                .andExpect(jsonPath("$.failedSuppliers[0].supplier").value("B"))
+                .andExpect(jsonPath("$.failedSuppliers[0].reason").doesNotExist())
+                .andExpect(jsonPath("$.failedSuppliers[0].resultMessage").doesNotExist())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        assertThat(json, not(containsString("resultMessage")));
+        공급사오퍼(json, "A", 429000L);
+    }
+
+    @Test
+    @DisplayName("B availability가 비-2xx이면 200이고 failedSuppliers는 B다")
+    void B가_비2xx이면_200에_A와_failedB() throws Exception {
+        공급사B검색을(new MockResponse().setResponseCode(500).setBody("{\"error\":\"down\"}"));
+        검색한다()
+                .andExpect(status().isOk())
+                .andExpect(header().doesNotExist("Retry-After"))
+                .andExpect(jsonPath("$.failedSuppliers.length()").value(1))
+                .andExpect(jsonPath("$.failedSuppliers[0].supplier").value("B"))
+                .andExpect(jsonPath("$.failedSuppliers[0].reason").doesNotExist());
+    }
+
+    @Test
+    @DisplayName("B availability가 JSON이 아니면 200이고 failedSuppliers는 B다")
+    void B가_비JSON이면_200에_A와_failedB() throws Exception {
+        공급사B검색을(new MockResponse().setHeader("Content-Type", "text/plain").setBody("not-json"));
+        검색한다()
+                .andExpect(status().isOk())
+                .andExpect(header().doesNotExist("Retry-After"))
+                .andExpect(jsonPath("$.failedSuppliers.length()").value(1))
+                .andExpect(jsonPath("$.failedSuppliers[0].supplier").value("B"))
+                .andExpect(jsonPath("$.failedSuppliers[0].reason").doesNotExist());
+    }
+
+    @Test
+    @DisplayName("A와 B availability가 모두 실패하면 503 problem+json 이고 Retry-After가 없다")
+    void A와_B가_모두_실패하면_503이다() throws Exception {
+        공급사A.setDispatcher(new Dispatcher() {
+            @Override
+            public MockResponse dispatch(RecordedRequest request) {
+                if ("/a/v1/availability".equals(request.getRequestUrl().encodedPath())) {
+                    return new MockResponse().setResponseCode(500).setBody("{\"error\":\"down\"}");
+                }
+                return new MockResponse().setResponseCode(404);
+            }
+        });
+        공급사B검색을(json응답(B장애본문));
+        검색한다()
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.status").value(503))
+                .andExpect(jsonPath("$.failedSuppliers[*].supplier", hasItems("A", "B")))
+                .andExpect(jsonPath("$.failedSuppliers[0].reason").doesNotExist())
+                .andExpect(header().doesNotExist("Retry-After"));
+    }
+
+    @Test
+    @DisplayName("매핑이 없어 아무도 호출하지 않으면 200 빈 골격이다")
+    void 매핑없으면_200_빈골격() throws Exception {
+        snapshotHolder.replace(MappingStore.MappingSnapshot.readyEmpty());
+        검색한다()
+                .andExpect(status().isOk())
+                .andExpect(header().doesNotExist("Retry-After"))
+                .andExpect(jsonPath("$.properties").isArray())
+                .andExpect(jsonPath("$.properties.length()").value(0))
+                .andExpect(jsonPath("$.failedSuppliers").isArray())
+                .andExpect(jsonPath("$.failedSuppliers.length()").value(0));
+    }
+
     @SuppressWarnings("unchecked")
     private static Map<String, Object> 공급사오퍼(String json, String supplier, long totalPrice) {
         List<Map<String, Object>> properties = com.jayway.jsonpath.JsonPath.read(json, "$.properties");
@@ -311,6 +403,26 @@ class StaySearchABIntegrationTest {
     @SuppressWarnings("unchecked")
     private static Map<String, Object> 맵(Object value) {
         return (Map<String, Object>) value;
+    }
+
+    private org.springframework.test.web.servlet.ResultActions 검색한다() throws Exception {
+        return mockMvc.perform(get(검색경로)
+                .param("checkIn", "2026-09-20")
+                .param("checkOut", "2026-09-23")
+                .param("adults", "2")
+                .param("children", "0"));
+    }
+
+    private static void 공급사B검색을(MockResponse 응답) {
+        공급사B.setDispatcher(new Dispatcher() {
+            @Override
+            public MockResponse dispatch(RecordedRequest request) {
+                if ("/b/api/search".equals(request.getRequestUrl().encodedPath())) {
+                    return 응답;
+                }
+                return new MockResponse().setResponseCode(404);
+            }
+        });
     }
 
     private static MockResponse json응답(String body) {

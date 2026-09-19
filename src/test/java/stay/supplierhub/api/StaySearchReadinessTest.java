@@ -12,6 +12,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
+import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -81,6 +82,8 @@ class StaySearchReadinessTest {
                 .andExpect(jsonPath("$.detail").exists())
                 .andExpect(jsonPath("$.instance").exists())
                 .andExpect(jsonPath("$.failedSuppliers[*].supplier").value(hasItem("A")))
+                .andExpect(jsonPath("$.failedSuppliers[*].supplier").value(hasItem("B")))
+                .andExpect(jsonPath("$.failedSuppliers[*].reason").doesNotExist())
                 .andExpect(header().doesNotExist("Retry-After"));
     }
 
@@ -99,6 +102,25 @@ class StaySearchReadinessTest {
                 .andExpect(jsonPath("$.properties.length()").value(0))
                 .andExpect(jsonPath("$.failedSuppliers").isArray())
                 .andExpect(jsonPath("$.failedSuppliers.length()").value(0));
+    }
+
+    @Test
+    @DisplayName("A는 준비+활성 코드 없고 B만 미준비면 200이고 failedSuppliers는 B다")
+    void 혼합준비_코드없음과_미준비는_200이다() throws Exception {
+        snapshotHolder.replace(MappingStore.MappingSnapshot.explicit(
+                Set.of(new SupplierId("A")), Set.of(new SupplierId("B"))));
+        mockMvc.perform(get(검색경로)
+                        .param("checkIn", "2026-09-20")
+                        .param("checkOut", "2026-09-22")
+                        .param("adults", "2")
+                        .param("children", "0"))
+                .andExpect(status().isOk())
+                .andExpect(header().doesNotExist("Retry-After"))
+                .andExpect(jsonPath("$.properties").isArray())
+                .andExpect(jsonPath("$.properties.length()").value(0))
+                .andExpect(jsonPath("$.failedSuppliers.length()").value(1))
+                .andExpect(jsonPath("$.failedSuppliers[0].supplier").value("B"))
+                .andExpect(jsonPath("$.failedSuppliers[0].reason").doesNotExist());
     }
 
     @Test

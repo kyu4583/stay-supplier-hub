@@ -125,12 +125,26 @@ public final class MappingStore {
 
     public static final class MappingSnapshot {
 
-        private final boolean ready;
+        private enum Readiness {
+            ALL_UNREADY,
+            ALL_READY,
+            EXPLICIT
+        }
+
+        private final Readiness readiness;
+        private final Set<String> readySupplierIds;
+        private final Set<String> unreadySupplierIds;
         private final List<MappedProperty> properties;
         private final Map<String, MappedProperty> bySupplierAndCode;
 
-        private MappingSnapshot(boolean ready, List<MappedProperty> properties) {
-            this.ready = ready;
+        private MappingSnapshot(
+                Readiness readiness,
+                List<MappedProperty> properties,
+                Set<String> readySupplierIds,
+                Set<String> unreadySupplierIds) {
+            this.readiness = readiness;
+            this.readySupplierIds = Set.copyOf(readySupplierIds);
+            this.unreadySupplierIds = Set.copyOf(unreadySupplierIds);
             this.properties = List.copyOf(properties);
             Map<String, MappedProperty> index = new LinkedHashMap<>();
             for (MappedProperty property : this.properties) {
@@ -140,19 +154,45 @@ public final class MappingStore {
         }
 
         public static MappingSnapshot unready() {
-            return new MappingSnapshot(false, List.of());
+            return new MappingSnapshot(Readiness.ALL_UNREADY, List.of(), Set.of(), Set.of());
         }
 
         public static MappingSnapshot readyEmpty() {
-            return new MappingSnapshot(true, List.of());
+            return new MappingSnapshot(Readiness.ALL_READY, List.of(), Set.of(), Set.of());
         }
 
         public static MappingSnapshot ready(List<MappedProperty> properties) {
-            return new MappingSnapshot(true, properties);
+            return new MappingSnapshot(Readiness.ALL_READY, properties, Set.of(), Set.of());
+        }
+
+        public static MappingSnapshot explicit(Set<SupplierId> readySuppliers, Set<SupplierId> unreadySuppliers) {
+            return explicit(List.of(), readySuppliers, unreadySuppliers);
+        }
+
+        public static MappingSnapshot explicit(
+                List<MappedProperty> properties, Set<SupplierId> readySuppliers, Set<SupplierId> unreadySuppliers) {
+            return new MappingSnapshot(
+                    Readiness.EXPLICIT, properties, supplierIds(readySuppliers), supplierIds(unreadySuppliers));
         }
 
         public boolean ready() {
-            return ready;
+            return readiness != Readiness.ALL_UNREADY;
+        }
+
+        public boolean isReady(SupplierId supplier) {
+            return switch (readiness) {
+                case ALL_UNREADY -> false;
+                case ALL_READY -> true;
+                case EXPLICIT -> readySupplierIds.contains(supplier.value());
+            };
+        }
+
+        public boolean participates(SupplierId supplier) {
+            return switch (readiness) {
+                case ALL_UNREADY, ALL_READY -> true;
+                case EXPLICIT ->
+                    readySupplierIds.contains(supplier.value()) || unreadySupplierIds.contains(supplier.value());
+            };
         }
 
         public List<String> activePropertyCodes(SupplierId supplier) {
@@ -192,6 +232,14 @@ public final class MappingStore {
                             roomType.roomTypeId(),
                             roomType.name(),
                             roomType.maxOccupancy()));
+        }
+
+        private static Set<String> supplierIds(Set<SupplierId> suppliers) {
+            Set<String> ids = new LinkedHashSet<>();
+            for (SupplierId supplier : suppliers) {
+                ids.add(supplier.value());
+            }
+            return ids;
         }
 
         private static String key(String supplier, String supplierPropertyCode) {
