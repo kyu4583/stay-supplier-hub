@@ -18,6 +18,7 @@ import stay.supplierhub.mapping.MappingStore.MappingSnapshot;
 import stay.supplierhub.mapping.MappingStore.MappingSnapshotHolder;
 import stay.supplierhub.mapping.MappingSync.PropertyListSynchronizer;
 import stay.supplierhub.search.SupplierContracts.AvailabilityQuery;
+import stay.supplierhub.search.SupplierContracts.ChunkFailure;
 import stay.supplierhub.search.SupplierContracts.RoomOffer;
 import stay.supplierhub.search.SupplierContracts.StaySearchUnavailableException;
 import stay.supplierhub.search.SupplierContracts.SupplierAvailabilityPort;
@@ -48,60 +49,74 @@ class DefaultStaySearchService implements StaySearchService {
     @Override
     public StaySearchResponse search(StaySearchRequest request) {
         MappingSnapshot snapshot = snapshotHolder.current();
-        if (!snapshot.ready()) {
-            List<String> failed = availabilityPorts.stream()
-                    .map(port -> port.supplierId().value())
-                    .toList();
-            throw new StaySearchUnavailableException(failed.isEmpty() ? List.of("A") : failed);
-        }
-
+        List<FailedSupplierResponse> unreadies = new ArrayList<>();
         List<Mono<SupplierSearchResult>> calls = new ArrayList<>();
+        boolean omittedReady = false;
         for (SupplierAvailabilityPort port : availabilityPorts) {
+            if (!snapshot.participates(port.supplierId())) {
+                continue;
+            }
+            if (!snapshot.isReady(port.supplierId())) {
+                unreadies.add(new FailedSupplierResponse(port.supplierId().value()));
+                continue;
+            }
             List<String> hotelCodes = snapshot.activePropertyCodes(port.supplierId());
             if (hotelCodes.isEmpty()) {
+                omittedReady = true;
                 continue;
             }
             calls.add(port.fetchAvailability(new AvailabilityQuery(
-                    hotelCodes,
-                    request.checkIn(),
-                    request.checkOut(),
-                    request.adults(),
-                    request.children(),
-                    snapshot.knownRoomTypes(port.supplierId()))));
-        }
-        if (calls.isEmpty()) {
-            return new StaySearchResponse(List.of(), List.of());
+                            hotelCodes,
+                            request.checkIn(),
+                            request.checkOut(),
+                            request.adults(),
+                            request.children(),
+                            snapshot.knownRoomTypes(port.supplierId())))
+                    .onErrorResume(ex -> Mono.just(new SupplierSearchResult(
+                            port.supplierId(),
+                            List.of(),
+                            List.of(new ChunkFailure(port.supplierId(), "UNAVAILABLE"))))));
         }
 
-        List<SupplierSearchResult> results = Flux.merge(calls).collectList().block();
-        List<SupplierSearchResult> resolved = results == null ? List.of() : results;
+        List<SupplierSearchResult> resolved = List.of();
+        if (!calls.isEmpty()) {
+            List<SupplierSearchResult> results = Flux.merge(calls).collectList().block();
+            resolved = results == null ? List.of() : results;
+        }
         for (SupplierSearchResult result : resolved) {
             for (UnmappedRoomType unmapped : result.unmappedRoomTypes()) {
                 synchronizer.requestForUnmapped(
                         result.supplier(), unmapped.supplierPropertyCode(), unmapped.supplierRoomTypeCode());
             }
         }
-        return assemble(snapshot, resolved);
+        return assemble(snapshot, resolved, unreadies, omittedReady);
     }
 
-    private StaySearchResponse assemble(MappingSnapshot snapshot, List<SupplierSearchResult> results) {
+    private StaySearchResponse assemble(
+            MappingSnapshot snapshot,
+            List<SupplierSearchResult> results,
+            List<FailedSupplierResponse> unreadies,
+            boolean omittedReady) {
         Map<Long, PropertyAcc> properties = new LinkedHashMap<>();
-        List<FailedSupplierResponse> failedSuppliers = new ArrayList<>();
-        boolean anyOffer = false;
+        List<FailedSupplierResponse> failedSuppliers = new ArrayList<>(unreadies);
+        boolean anySuccessfulCall = false;
+        boolean anyCallFailure = false;
         for (SupplierSearchResult result : results) {
             if (!result.failures().isEmpty()) {
                 failedSuppliers.add(new FailedSupplierResponse(result.supplier().value()));
+                anyCallFailure = true;
+            } else {
+                anySuccessfulCall = true;
             }
             for (RoomOffer offer : result.offers()) {
                 java.util.Optional<MappedOfferTarget> mapped = snapshot.find(
                         result.supplier(), offer.supplierPropertyCode(), offer.supplierRoomTypeCode());
                 if (mapped.isPresent()) {
                     addOffer(properties, mapped.get(), result.supplier().value(), offer);
-                    anyOffer = true;
                 }
             }
         }
-        if (!anyOffer && !failedSuppliers.isEmpty()) {
+        if (!anySuccessfulCall && !failedSuppliers.isEmpty() && !(omittedReady && !anyCallFailure)) {
             throw new StaySearchUnavailableException(
                     failedSuppliers.stream().map(FailedSupplierResponse::supplier).toList());
         }

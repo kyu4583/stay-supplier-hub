@@ -5,7 +5,9 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -249,6 +251,7 @@ public final class MappingSync {
                             supplier, property.supplierPropertyCode(), roomType.supplierRoomTypeCode());
                 }
             }
+            snapshotHolder.replace(loadReadySnapshot());
         }
 
         private MappingSnapshot loadReadySnapshot() {
@@ -262,7 +265,24 @@ public final class MappingSync {
                 mapped.add(new MappedProperty(
                         property.id, property.supplier, property.supplierPropertyCode, property.name, rooms));
             }
-            return MappingSnapshot.ready(mapped);
+            Set<SupplierId> ready = new LinkedHashSet<>();
+            Set<SupplierId> unready = new LinkedHashSet<>();
+            Set<String> readyValues = new LinkedHashSet<>();
+            for (SupplierReadinessEntity row : readinessRepository.findAll()) {
+                SupplierId id = new SupplierId(row.supplier);
+                if (row.ready) {
+                    ready.add(id);
+                    readyValues.add(row.supplier);
+                } else {
+                    unready.add(id);
+                }
+            }
+            for (SupplierCatalogPort port : catalogPorts) {
+                if (!readyValues.contains(port.supplierId().value())) {
+                    unready.add(port.supplierId());
+                }
+            }
+            return MappingSnapshot.explicit(mapped, ready, unready);
         }
     }
 
