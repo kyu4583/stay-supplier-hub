@@ -99,13 +99,13 @@ class StaySearchChunkingIntegrationTest {
     static void 테스트속성(DynamicPropertyRegistry registry) {
         registry.add("stay.supplier.a.base-url", () -> 공급사A.url("/").toString().replaceAll("/$", ""));
         registry.add("stay.supplier.a.api-key", () -> "demo-a-key");
-        registry.add("stay.supplier.a.response-timeout", () -> "300ms");
-        registry.add("stay.supplier.a.connect-timeout", () -> "300ms");
+        registry.add("stay.supplier.a.response-timeout", () -> "1s");
+        registry.add("stay.supplier.a.connect-timeout", () -> "1s");
         registry.add("stay.supplier.b.base-url", () -> 공급사B.url("/").toString().replaceAll("/$", ""));
         registry.add("stay.supplier.b.api-key", () -> "demo-b-key");
-        registry.add("stay.supplier.b.response-timeout", () -> "300ms");
-        registry.add("stay.supplier.b.connect-timeout", () -> "300ms");
-        registry.add("stay.search.budget", () -> "2s");
+        registry.add("stay.supplier.b.response-timeout", () -> "1s");
+        registry.add("stay.supplier.b.connect-timeout", () -> "1s");
+        registry.add("stay.search.budget", () -> "4s");
         registry.add("stay.mapping.sync-on-startup", () -> "false");
         registry.add(
                 "spring.datasource.url",
@@ -210,7 +210,7 @@ class StaySearchChunkingIntegrationTest {
     @DisplayName("A 한 묶음만 응답 타임아웃을 넘기면 200이고 다른 A 묶음 숙소는 남는다")
     void A_한묶음_응답타임아웃은_그묶음만_빠진다() throws Exception {
         공급사A재고를(codes -> codes.contains(A표식코드)
-                ? json응답(A재고본문(codes)).setHeadersDelay(1, TimeUnit.SECONDS)
+                ? json응답(A재고본문(codes)).setHeadersDelay(3, TimeUnit.SECONDS)
                 : json응답(A재고본문(codes)));
 
         String json = 부분실패_200을_검증한다("A");
