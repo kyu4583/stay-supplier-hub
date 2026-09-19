@@ -51,7 +51,7 @@ Mock A와 Mock B는 기동 옵션으로 장애를 재현합니다. 옵션 이름
 |---|---|---|---|
 | `mock.mode` | `normal` (기본) | 정상 응답 | 정상 응답 |
 | | `outage` | 검색에 HTTP 503 `SERVICE_UNAVAILABLE` | 검색에 HTTP 200 + `E503` `TEMPORARILY_UNAVAILABLE`, `data` null |
-| | `no-response` | 검색에 60초 넘게 응답하지 않음 | 같음 |
+| | `no-response` | 검색에 90초 동안 응답하지 않다가 정상 응답 | 같음 |
 | | `delay` | `mock.delay`만큼 기다린 뒤 정상 응답 | 같음 |
 | `mock.delay` | 기간 (`2500ms`) | `delay` 모드의 지연 | 같음 |
 | `mock.catalog-mode` | `normal` (기본), `outage` | 숙소 목록에 HTTP 503 `SERVICE_UNAVAILABLE` | 숙소 목록에 HTTP 200 + `E503`, `data` null |
