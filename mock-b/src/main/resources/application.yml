@@ -1,2 +1,9 @@
 server:
   port: 9091
+
+mock:
+  mode: normal
+  delay: 2500ms
+  catalog-mode: normal
+  extra-properties: 0
+  fault-codes:
