@@ -7,6 +7,7 @@ import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.lessThanOrEqualTo;
 import static org.hamcrest.Matchers.not;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -15,6 +16,7 @@ import com.jayway.jsonpath.JsonPath;
 import java.io.IOException;
 import java.time.Clock;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
@@ -23,6 +25,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -40,6 +43,7 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
+import org.springframework.http.MediaType;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
@@ -64,6 +68,7 @@ class StaySearchChunkingIntegrationTest {
     private static final String B숙소이름접두사 = "Demo Stay B";
     private static final List<String> B숙소코드 =
             IntStream.rangeClosed(90001, 90120).mapToObj(n -> "B" + n).toList();
+    private static final LocalDate 요청체크인 = LocalDate.of(2026, 9, 20);
     private static final String A표식코드 = "A-20060";
     private static final String B표식코드 = "B90060";
     private static final String B장애본문 =
@@ -86,6 +91,9 @@ class StaySearchChunkingIntegrationTest {
 
     @Autowired
     MappingStore.MappingUpsertService mappingUpsertService;
+
+    @Autowired
+    MappingStore.MappingSnapshotHolder snapshotHolder;
 
     @DynamicPropertySource
     static void 테스트속성(DynamicPropertyRegistry registry) {
@@ -210,6 +218,100 @@ class StaySearchChunkingIntegrationTest {
         A_실패묶음만_빠졌는지_검증한다(json);
     }
 
+    @Test
+    @DisplayName("A 한 묶음의 모든 항목 날짜가 요청 박과 다르면 그 묶음만 실패해 200이고 다른 A 묶음 숙소는 남는다")
+    void A_한묶음_전항목제외는_그묶음만_실패다() throws Exception {
+        공급사A재고를(codes -> codes.contains(A표식코드)
+                ? json응답(A재고본문(codes, LocalDate.of(2026, 10, 1)))
+                : json응답(A재고본문(codes)));
+
+        String json = 부분실패_200을_검증한다("A");
+
+        A_실패묶음만_빠졌는지_검증한다(json);
+    }
+
+    @Test
+    @DisplayName("B 한 묶음의 items가 빈 배열이면 정상 빈 결과라 failedSuppliers에 넣지 않는다")
+    void B_한묶음_빈items는_실패가_아니다() throws Exception {
+        공급사B재고를(codes -> codes.contains(B표식코드)
+                ? json응답("{\"resultCode\":\"0000\",\"resultMessage\":\"SUCCESS\",\"data\":{\"items\":[]}}")
+                : json응답(B재고본문(codes)));
+
+        String json = 검색한다()
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.failedSuppliers.length()").value(0))
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        B_실패묶음만_빠졌는지_검증한다(json);
+    }
+
+    @Test
+    @DisplayName("한 묶음 응답에 그 묶음 요청 밖 코드 항목이 섞이면 그 항목은 빠지고 해당 숙소는 자기 묶음 오퍼 하나만 있다")
+    void 묶음밖_코드_항목은_제외된다() throws Exception {
+        AtomicReference<String> 섞인코드 = new AtomicReference<>();
+        공급사A재고를(codes -> {
+            if (!codes.contains(A표식코드)) {
+                return json응답(A재고본문(codes));
+            }
+            String 다른묶음코드 = A숙소코드.stream().filter(code -> !codes.contains(code)).findFirst().orElseThrow();
+            섞인코드.set(다른묶음코드);
+            List<String> items = new ArrayList<>(codes.stream().map(code -> A재고항목(code, 요청체크인, 120000, 12000)).toList());
+            items.add(A재고항목(다른묶음코드, 요청체크인, 700000, 2000));
+            return json응답("{\"items\":[" + String.join(",", items) + "]}");
+        });
+
+        String json = 검색한다()
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.failedSuppliers.length()").value(0))
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        List<Number> 전체요금 = JsonPath.read(json, "$.properties[*].roomTypes[*].offers[*].totalPrice");
+        assertThat(전체요금.stream().map(Number::longValue).toList(), not(hasItem(999000L)));
+        List<Number> 섞인숙소요금 = JsonPath.read(
+                json,
+                "$.properties[?(@.propertyName == 'Demo Hotel " + 섞인코드.get() + "')].roomTypes[*].offers[*].totalPrice");
+        assertThat(섞인숙소요금.stream().map(Number::longValue).toList(), equalTo(List.of(429000L)));
+    }
+
+    @Test
+    @DisplayName("A만 참가할 때 일부 묶음만 실패하고 오퍼가 남으면 503이 아니라 200이고 failedSuppliers는 A다")
+    void A만_참가_일부묶음실패는_200이다() throws Exception {
+        A만_참가시킨다();
+        공급사A재고를(codes -> codes.contains(A표식코드)
+                ? new MockResponse().setResponseCode(500).setBody("{\"error\":\"down\"}")
+                : json응답(A재고본문(codes)));
+
+        String json = 부분실패_200을_검증한다("A");
+
+        A_실패묶음만_빠졌는지_검증한다(json);
+        assertThat(숙소이름(json, B숙소이름접두사).size(), equalTo(0));
+        assertThat(기록된_묶음(공급사B, B재고경로, "propertyIds").size(), equalTo(0));
+    }
+
+    @Test
+    @DisplayName("A만 참가할 때 모든 묶음이 실패하면 503 problem+json이고 Retry-After가 없다")
+    void A만_참가_전묶음실패는_503이다() throws Exception {
+        A만_참가시킨다();
+        공급사A재고를(codes -> new MockResponse().setResponseCode(500).setBody("{\"error\":\"down\"}"));
+
+        검색한다()
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(header().doesNotExist("Retry-After"))
+                .andExpect(jsonPath("$.failedSuppliers.length()").value(1))
+                .andExpect(jsonPath("$.failedSuppliers[0].supplier").value("A"))
+                .andExpect(jsonPath("$.failedSuppliers[0].reason").doesNotExist());
+    }
+
+    private void A만_참가시킨다() {
+        snapshotHolder.replace(MappingStore.MappingSnapshot.explicit(
+                snapshotHolder.current().properties(), Set.of(new SupplierId("A")), Set.of()));
+    }
+
     private String 부분실패_200을_검증한다(String supplier) throws Exception {
         String json = 검색한다()
                 .andExpect(status().isOk())
@@ -295,18 +397,22 @@ class StaySearchChunkingIntegrationTest {
     }
 
     private static String A재고본문(List<String> codes) {
-        List<String> items = codes.stream().map(code -> A재고항목(code, "2026-09", 120000, 12000)).toList();
+        return A재고본문(codes, 요청체크인);
+    }
+
+    private static String A재고본문(List<String> codes, LocalDate 첫날) {
+        List<String> items = codes.stream().map(code -> A재고항목(code, 첫날, 120000, 12000)).toList();
         return "{\"items\":[" + String.join(",", items) + "]}";
     }
 
-    private static String A재고항목(String code, String 연월, long 첫박요금, long 첫박세금) {
+    private static String A재고항목(String code, LocalDate 첫날, long 첫박요금, long 첫박세금) {
         return """
                 {"hotelCode":"%s","hotelName":"Demo Hotel %s","roomTypeCode":"DLX-TWN","roomTypeName":"Deluxe Twin",\
                 "maxOccupancy":2,"breakfastIncluded":false,"currency":"KRW","dailyRates":[\
-                {"date":"%s-20","remainingRooms":3,"nightlyRate":%d,"taxAmount":%d},\
-                {"date":"%s-21","remainingRooms":1,"nightlyRate":150000,"taxAmount":15000},\
-                {"date":"%s-22","remainingRooms":5,"nightlyRate":120000,"taxAmount":12000}]}"""
-                .formatted(code, code, 연월, 첫박요금, 첫박세금, 연월, 연월);
+                {"date":"%s","remainingRooms":3,"nightlyRate":%d,"taxAmount":%d},\
+                {"date":"%s","remainingRooms":1,"nightlyRate":150000,"taxAmount":15000},\
+                {"date":"%s","remainingRooms":5,"nightlyRate":120000,"taxAmount":12000}]}"""
+                .formatted(code, code, 첫날, 첫박요금, 첫박세금, 첫날.plusDays(1), 첫날.plusDays(2));
     }
 
     private static String B재고본문(List<String> codes) {
