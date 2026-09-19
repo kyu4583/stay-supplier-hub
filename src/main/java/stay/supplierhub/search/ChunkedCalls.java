@@ -17,7 +17,7 @@ import stay.supplierhub.search.SupplierContracts.UnmappedRoomType;
 
 public final class ChunkedCalls {
 
-    private static final String BUDGET_EXCEEDED = "BUDGET_EXCEEDED";
+    static final String BUDGET_EXCEEDED = "BUDGET_EXCEEDED";
     private static final String EMPTY_RESULT = "EMPTY_RESULT";
 
     private ChunkedCalls() {}

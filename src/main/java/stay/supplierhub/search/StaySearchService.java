@@ -102,7 +102,7 @@ class DefaultStaySearchService implements StaySearchService {
                                 List.of(),
                                 List.of(new ChunkFailure(
                                         port.supplierId(),
-                                        ex instanceof TimeoutException ? "BUDGET_EXCEEDED" : "UNAVAILABLE"))));
+                                        ex instanceof TimeoutException ? ChunkedCalls.BUDGET_EXCEEDED : "UNAVAILABLE"))));
                     }));
         }
 
