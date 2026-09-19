@@ -1,9 +1,13 @@
 package stay.supplierhub.api;
 
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.lessThanOrEqualTo;
+import static org.hamcrest.Matchers.not;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -19,6 +23,8 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import okhttp3.mockwebserver.Dispatcher;
 import okhttp3.mockwebserver.MockResponse;
@@ -54,6 +60,14 @@ class StaySearchChunkingIntegrationTest {
     private static final String A숙소이름접두사 = "Demo Hotel A-";
     private static final List<String> A숙소코드 =
             IntStream.rangeClosed(20001, 20120).mapToObj(n -> "A-" + n).toList();
+    private static final String B재고경로 = "/b/api/search";
+    private static final String B숙소이름접두사 = "Demo Stay B";
+    private static final List<String> B숙소코드 =
+            IntStream.rangeClosed(90001, 90120).mapToObj(n -> "B" + n).toList();
+    private static final String A표식코드 = "A-20060";
+    private static final String B표식코드 = "B90060";
+    private static final String B장애본문 =
+            "{\"resultCode\":\"E503\",\"resultMessage\":\"TEMPORARILY_UNAVAILABLE\",\"data\":null}";
 
     private static final MockWebServer 공급사A = new MockWebServer();
     private static final MockWebServer 공급사B = new MockWebServer();
@@ -116,15 +130,15 @@ class StaySearchChunkingIntegrationTest {
                                 code, A숙소이름접두사 + code.substring(2),
                                 List.of(new CatalogRoomType("DLX-TWN", "Deluxe Twin", 2))))
                         .toList()));
-        공급사A.setDispatcher(new Dispatcher() {
-            @Override
-            public MockResponse dispatch(RecordedRequest request) {
-                if (A재고경로.equals(request.getRequestUrl().encodedPath())) {
-                    return json응답(A재고본문(요청코드(request, "hotelCodes")));
-                }
-                return new MockResponse().setResponseCode(404);
-            }
-        });
+        mappingUpsertService.apply(new SupplierCatalog(
+                new SupplierId("B"),
+                B숙소코드.stream()
+                        .map(code -> new CatalogProperty(
+                                code, "Demo Stay " + code,
+                                List.of(new CatalogRoomType("R-401", "Deluxe Twin Room", 2))))
+                        .toList()));
+        공급사A재고를(codes -> json응답(A재고본문(codes)));
+        공급사B재고를(codes -> json응답(B재고본문(codes)));
         기록을_비운다(공급사A);
         기록을_비운다(공급사B);
     }
@@ -142,6 +156,104 @@ class StaySearchChunkingIntegrationTest {
         assertThat(숙소이름(json, A숙소이름접두사).size(), equalTo(120));
         List<List<String>> 묶음들 = 기록된_묶음(공급사A, A재고경로, "hotelCodes");
         묶음_분할을_검증한다(묶음들, A숙소코드);
+    }
+
+    @Test
+    @DisplayName("B 숙소 코드 120개 검색은 propertyIds 50개 이하 3번 호출로 나뉜다")
+    void B_120개는_3묶음으로_나간다() throws Exception {
+        String json = 검색한다()
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.failedSuppliers.length()").value(0))
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        assertThat(숙소이름(json, B숙소이름접두사).size(), equalTo(120));
+        묶음_분할을_검증한다(기록된_묶음(공급사B, B재고경로, "propertyIds"), B숙소코드);
+    }
+
+    @Test
+    @DisplayName("A 한 묶음만 HTTP 500이면 200이고 그 묶음 숙소만 빠지며 failedSuppliers는 A다")
+    void A_한묶음_HTTP500은_그묶음만_빠진다() throws Exception {
+        공급사A재고를(codes -> codes.contains(A표식코드)
+                ? new MockResponse().setResponseCode(500).setBody("{\"error\":\"down\"}")
+                : json응답(A재고본문(codes)));
+
+        String json = 부분실패_200을_검증한다("A");
+
+        A_실패묶음만_빠졌는지_검증한다(json);
+        assertThat(숙소이름(json, B숙소이름접두사).size(), equalTo(120));
+    }
+
+    @Test
+    @DisplayName("B 한 묶음만 resultCode E503이면 200이고 그 묶음 밖 B 숙소는 모두 있다")
+    void B_한묶음_E503은_그묶음만_빠진다() throws Exception {
+        공급사B재고를(codes -> codes.contains(B표식코드) ? json응답(B장애본문) : json응답(B재고본문(codes)));
+
+        String json = 부분실패_200을_검증한다("B");
+
+        B_실패묶음만_빠졌는지_검증한다(json);
+        assertThat(json, not(containsString("resultMessage")));
+        assertThat(json, not(containsString("TEMPORARILY_UNAVAILABLE")));
+        assertThat(숙소이름(json, A숙소이름접두사).size(), equalTo(120));
+    }
+
+    @Test
+    @DisplayName("A 한 묶음만 응답 타임아웃을 넘기면 200이고 다른 A 묶음 숙소는 남는다")
+    void A_한묶음_응답타임아웃은_그묶음만_빠진다() throws Exception {
+        공급사A재고를(codes -> codes.contains(A표식코드)
+                ? json응답(A재고본문(codes)).setHeadersDelay(1, TimeUnit.SECONDS)
+                : json응답(A재고본문(codes)));
+
+        String json = 부분실패_200을_검증한다("A");
+
+        A_실패묶음만_빠졌는지_검증한다(json);
+    }
+
+    private String 부분실패_200을_검증한다(String supplier) throws Exception {
+        String json = 검색한다()
+                .andExpect(status().isOk())
+                .andExpect(header().doesNotExist("Retry-After"))
+                .andExpect(jsonPath("$.failedSuppliers.length()").value(1))
+                .andExpect(jsonPath("$.failedSuppliers[0].supplier").value(supplier))
+                .andExpect(jsonPath("$.failedSuppliers[0].reason").doesNotExist())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        실패사유가_없는지_검증한다(json);
+        return json;
+    }
+
+    private void A_실패묶음만_빠졌는지_검증한다(String json) throws InterruptedException {
+        List<String> 실패묶음 = 표식묶음(기록된_묶음(공급사A, A재고경로, "hotelCodes"), A표식코드);
+        Set<String> 기대코드 = new LinkedHashSet<>(A숙소코드);
+        실패묶음.forEach(기대코드::remove);
+        assertThat(응답코드(json, A숙소이름접두사, "Demo Hotel "), equalTo(기대코드));
+    }
+
+    private void B_실패묶음만_빠졌는지_검증한다(String json) throws InterruptedException {
+        List<String> 실패묶음 = 표식묶음(기록된_묶음(공급사B, B재고경로, "propertyIds"), B표식코드);
+        Set<String> 기대코드 = new LinkedHashSet<>(B숙소코드);
+        실패묶음.forEach(기대코드::remove);
+        assertThat(응답코드(json, B숙소이름접두사, "Demo Stay "), equalTo(기대코드));
+    }
+
+    private static void 실패사유가_없는지_검증한다(String json) {
+        for (String 사유 : List.of("HTTP_", "INVALID_RESPONSE", "EMPTY_RESULT", "BUDGET_EXCEEDED", "Exception", "reason")) {
+            assertThat(json, not(containsString(사유)));
+        }
+    }
+
+    private static List<String> 표식묶음(List<List<String>> 묶음들, String 표식코드) {
+        List<String> 표식 = 묶음들.stream().filter(묶음 -> 묶음.contains(표식코드)).findFirst().orElseThrow();
+        assertThat(표식, hasItem(표식코드));
+        return 표식;
+    }
+
+    private static Set<String> 응답코드(String json, String 접두사, String 이름앞부분) {
+        return 숙소이름(json, 접두사).stream()
+                .map(name -> name.substring(이름앞부분.length()))
+                .collect(Collectors.toCollection(LinkedHashSet::new));
     }
 
     private static void 묶음_분할을_검증한다(List<List<String>> 묶음들, List<String> 전체코드) {
@@ -195,6 +307,40 @@ class StaySearchChunkingIntegrationTest {
                 {"date":"%s-21","remainingRooms":1,"nightlyRate":150000,"taxAmount":15000},\
                 {"date":"%s-22","remainingRooms":5,"nightlyRate":120000,"taxAmount":12000}]}"""
                 .formatted(code, code, 연월, 첫박요금, 첫박세금, 연월, 연월);
+    }
+
+    private static String B재고본문(List<String> codes) {
+        List<String> items = codes.stream()
+                .map(code -> """
+                        {"propertyId":"%s","propertyName":"Demo Stay %s","roomId":"R-401","roomName":"Deluxe Twin Room",\
+                        "maxOccupancy":2,"breakfastIncluded":true,"currency":"KRW","totalPrice":452000,"taxIncluded":true,\
+                        "inventory":[{"date":"2026-09-20","remainingRooms":3},{"date":"2026-09-21","remainingRooms":1},\
+                        {"date":"2026-09-22","remainingRooms":5}]}"""
+                        .formatted(code, code))
+                .toList();
+        return "{\"resultCode\":\"0000\",\"resultMessage\":\"SUCCESS\",\"data\":{\"items\":["
+                + String.join(",", items) + "]}}";
+    }
+
+    private static void 공급사A재고를(Function<List<String>, MockResponse> 응답) {
+        공급사A.setDispatcher(재고디스패처(A재고경로, "hotelCodes", 응답));
+    }
+
+    private static void 공급사B재고를(Function<List<String>, MockResponse> 응답) {
+        공급사B.setDispatcher(재고디스패처(B재고경로, "propertyIds", 응답));
+    }
+
+    private static Dispatcher 재고디스패처(
+            String 경로, String 코드파라미터, Function<List<String>, MockResponse> 응답) {
+        return new Dispatcher() {
+            @Override
+            public MockResponse dispatch(RecordedRequest request) {
+                if (경로.equals(request.getRequestUrl().encodedPath())) {
+                    return 응답.apply(요청코드(request, 코드파라미터));
+                }
+                return new MockResponse().setResponseCode(404);
+            }
+        };
     }
 
     private static void 기록을_비운다(MockWebServer 서버) throws InterruptedException {
