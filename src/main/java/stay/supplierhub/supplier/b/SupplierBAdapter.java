@@ -24,6 +24,7 @@ import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 import reactor.netty.http.client.HttpClient;
 import reactor.netty.resources.ConnectionProvider;
+import stay.supplierhub.search.ChunkedCalls;
 import stay.supplierhub.search.SupplierContracts.AvailabilityQuery;
 import stay.supplierhub.search.SupplierContracts.CatalogProperty;
 import stay.supplierhub.search.SupplierContracts.CatalogRoomType;
@@ -46,7 +47,8 @@ record SupplierBProperties(
         Duration responseTimeout,
         Duration connectTimeout,
         Duration pendingAcquireTimeout,
-        int maxConnections) {}
+        int maxConnections,
+        int maxConcurrentCalls) {}
 
 record SupplierBPropertiesEnvelope(String resultCode, String resultMessage, SupplierBPropertiesData data) {}
 
@@ -289,6 +291,16 @@ public class SupplierBAdapter implements SupplierCatalogPort, SupplierAvailabili
 
     @Override
     public Mono<SupplierSearchResult> fetchAvailability(AvailabilityQuery query) {
+        return ChunkedCalls.collect(
+                supplierId(),
+                query.hotelCodes(),
+                properties.maxCodesPerCall(),
+                properties.maxConcurrentCalls(),
+                query.budget(),
+                chunk -> fetchChunk(query.withHotelCodes(chunk)));
+    }
+
+    private Mono<SupplierSearchResult> fetchChunk(AvailabilityQuery query) {
         return webClient
                 .get()
                 .uri(uriBuilder -> uriBuilder
