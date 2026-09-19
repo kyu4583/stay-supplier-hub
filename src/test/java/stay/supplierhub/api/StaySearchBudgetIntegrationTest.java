@@ -18,10 +18,14 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import okhttp3.mockwebserver.Dispatcher;
 import okhttp3.mockwebserver.MockResponse;
@@ -61,6 +65,9 @@ class StaySearchBudgetIntegrationTest {
     private static final List<String> A숙소코드 =
             IntStream.rangeClosed(20001, 20120).mapToObj(n -> "A-" + n).toList();
     private static final List<String> B숙소코드 = List.of("B90001");
+    private static final List<String> B숙소코드120 =
+            IntStream.rangeClosed(90001, 90120).mapToObj(n -> "B" + n).toList();
+    private static final String A표식코드 = "A-20060";
     private static final long 예산상한밀리초 = 2500;
 
     private static final MockWebServer 공급사A = new MockWebServer();
@@ -176,6 +183,54 @@ class StaySearchBudgetIntegrationTest {
         실패사유가_없는지_검증한다(json);
     }
 
+    @Test
+    @DisplayName("A 묶음 중 하나만 응답하지 않으면 예산 만료 때 끝난 A 묶음 숙소는 남고 그 묶음 숙소만 빠지며 failedSuppliers는 A다")
+    void 예산만료때_끝난묶음은_남는다() throws Exception {
+        공급사A재고를(codes -> codes.contains(A표식코드) ? 무응답() : json응답(A재고본문(codes)));
+
+        long 시작 = System.nanoTime();
+        MvcResult result = 검색한다()
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.failedSuppliers.length()").value(1))
+                .andExpect(jsonPath("$.failedSuppliers[0].supplier").value("A"))
+                .andExpect(jsonPath("$.failedSuppliers[0].reason").doesNotExist())
+                .andReturn();
+        예산안에_끝났는지_검증한다(시작);
+
+        String json = result.getResponse().getContentAsString();
+        실패사유가_없는지_검증한다(json);
+        List<List<String>> 묶음들 = 기록된_묶음(공급사A, A재고경로, "hotelCodes");
+        assertThat(묶음들.size(), equalTo(3));
+        List<String> 무응답묶음 = 묶음들.stream().filter(묶음 -> 묶음.contains(A표식코드)).findFirst().orElseThrow();
+        Set<String> 기대코드 = new LinkedHashSet<>(A숙소코드);
+        무응답묶음.forEach(기대코드::remove);
+        assertThat(응답코드(json, "Demo Hotel "), equalTo(기대코드));
+        assertThat(숙소이름(json, "Demo Stay ").size(), equalTo(1));
+    }
+
+    @Test
+    @DisplayName("B 커넥션 풀 상한 1에서 첫 묶음이 커넥션을 쥐는 동안 획득 대기를 넘긴 두 묶음만 실패하고 첫 묶음 숙소는 남는다")
+    void 커넥션_획득대기_초과묶음만_실패한다() throws Exception {
+        B카탈로그를_반영한다(B숙소코드120);
+        공급사B재고를(codes -> json응답(B재고본문(codes)).setHeadersDelay(600, TimeUnit.MILLISECONDS));
+
+        long 시작 = System.nanoTime();
+        MvcResult result = 검색한다()
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.failedSuppliers.length()").value(1))
+                .andExpect(jsonPath("$.failedSuppliers[0].supplier").value("B"))
+                .andExpect(jsonPath("$.failedSuppliers[0].reason").doesNotExist())
+                .andReturn();
+        예산안에_끝났는지_검증한다(시작);
+
+        String json = result.getResponse().getContentAsString();
+        실패사유가_없는지_검증한다(json);
+        List<List<String>> 도달한묶음 = 기록된_묶음(공급사B, B재고경로, "propertyIds");
+        assertThat(도달한묶음.size(), equalTo(1));
+        assertThat(응답코드(json, "Demo Stay "), equalTo(new LinkedHashSet<>(도달한묶음.get(0))));
+        assertThat(숙소이름(json, "Demo Hotel ").size(), equalTo(A숙소코드.size()));
+    }
+
     private static void 예산안에_끝났는지_검증한다(long 시작) {
         long 경과밀리초 = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - 시작);
         assertThat(경과밀리초, lessThan(예산상한밀리초));
@@ -194,6 +249,24 @@ class StaySearchBudgetIntegrationTest {
                         .map(code -> new CatalogProperty(
                                 code, "Demo Stay " + code, List.of(new CatalogRoomType("R-401", "Deluxe Twin Room", 2))))
                         .toList()));
+    }
+
+    private static List<List<String>> 기록된_묶음(MockWebServer 서버, String 경로, String 코드파라미터)
+            throws InterruptedException {
+        List<List<String>> 묶음들 = new ArrayList<>();
+        RecordedRequest request;
+        while ((request = 서버.takeRequest(200, TimeUnit.MILLISECONDS)) != null) {
+            if (경로.equals(request.getRequestUrl().encodedPath())) {
+                묶음들.add(요청코드(request, 코드파라미터));
+            }
+        }
+        return 묶음들;
+    }
+
+    private static Set<String> 응답코드(String json, String 이름앞부분) {
+        return 숙소이름(json, 이름앞부분).stream()
+                .map(name -> name.substring(이름앞부분.length()))
+                .collect(Collectors.toCollection(LinkedHashSet::new));
     }
 
     private static List<String> 숙소이름(String json, String 접두사) {
