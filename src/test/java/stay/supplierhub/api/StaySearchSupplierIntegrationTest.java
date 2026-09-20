@@ -398,6 +398,79 @@ class StaySearchSupplierIntegrationTest {
     }
 
     @Nested
+    @DisplayName("공급사 B만 참가")
+    class 공급사_B만_참가 {
+
+        @Test
+        @DisplayName("B 숙소 검색은 세금포함 총액 452000과 기간 최소 재고 1을 반환한다")
+        void B검색_세금포함총액과_기간최소재고() throws Exception {
+            B만_참가시킨다();
+            String json = 검색한다()
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.properties.length()").value(1))
+                    .andExpect(jsonPath("$.failedSuppliers.length()").value(0))
+                    .andExpect(jsonPath(
+                                    "$.properties[?(@.propertyName == 'Riverside Hotel Seoul')].roomTypes[0].offers[0].supplier")
+                            .value("B"))
+                    .andReturn()
+                    .getResponse()
+                    .getContentAsString();
+
+            assertThat(숙소필드(json, "Riverside Hotel Seoul", "roomTypes[0].offers[0].totalPrice"), equalTo(452000));
+            assertThat(숙소필드(json, "Riverside Hotel Seoul", "roomTypes[0].offers[0].currency"), equalTo("KRW"));
+            assertThat(숙소필드(json, "Riverside Hotel Seoul", "roomTypes[0].offers[0].availableRooms"), equalTo(1));
+            assertThat(숙소필드(json, "Riverside Hotel Seoul", "roomTypes[0].offers[0].breakfastIncluded"), equalTo(true));
+
+            RecordedRequest 재고요청 = 공급사B.takeRequest(200, TimeUnit.MILLISECONDS);
+            assertThat(재고요청, notNullValue());
+            assertThat(재고요청.getRequestUrl().encodedPath(), equalTo("/b/api/search"));
+            assertThat(재고요청.getRequestUrl().queryParameter("propertyIds"), containsString("B77120"));
+            assertThat(재고요청.getRequestUrl().queryParameter("checkIn"), equalTo("2026-09-20"));
+            assertThat(재고요청.getRequestUrl().queryParameter("checkOut"), equalTo("2026-09-23"));
+            assertThat(재고요청.getRequestUrl().queryParameter("adults"), equalTo("2"));
+            assertThat(재고요청.getRequestUrl().queryParameter("children"), equalTo("0"));
+            assertThat(재고요청.getHeader("X-Api-Key"), equalTo(B키));
+        }
+
+        @Test
+        @DisplayName("B-only에서 resultCode E503은 503이고 어댑터가 실패를 값으로 돌려준다")
+        void B만_봉투실패면_503이다() throws Exception {
+            B만_참가시킨다();
+            공급사B검색을(json응답(B장애본문));
+            SupplierSearchResult 어댑터결과 =
+                    가용성포트("B").fetchAvailability(검색조건("B", "B77120")).block();
+            assertThat(어댑터결과, notNullValue());
+            assertThat(어댑터결과.failures(), not(empty()));
+            assertThat(어댑터결과.failures().getFirst().supplier().value(), equalTo("B"));
+            호출실패_503을_검증한다("B");
+        }
+
+        @Test
+        @DisplayName("B-only에서 search HTTP 500은 503이고 failedSuppliers는 B다")
+        void B만_HTTP_500이면_503이다() throws Exception {
+            B만_참가시킨다();
+            공급사B검색을(new MockResponse().setResponseCode(500).setBody("{\"error\":\"down\"}"));
+            호출실패_503을_검증한다("B");
+        }
+
+        @Test
+        @DisplayName("B-only에서 search 본문이 JSON이 아니면 503이고 failedSuppliers는 B다")
+        void B만_비JSON이면_503이다() throws Exception {
+            B만_참가시킨다();
+            공급사B검색을(new MockResponse().setHeader("Content-Type", "text/plain").setBody("not-json"));
+            호출실패_503을_검증한다("B");
+        }
+
+        @Test
+        @DisplayName("B-only에서 search가 response-timeout보다 길면 503이고 failedSuppliers는 B다")
+        void B만_응답지연이면_503이다() throws Exception {
+            B만_참가시킨다();
+            공급사B검색을(json응답(B재고요금본문).setHeadersDelay(400, TimeUnit.MILLISECONDS));
+            호출실패_503을_검증한다("B");
+        }
+    }
+
+    @Nested
     @DisplayName("공급사 A와 B 참가")
     class 공급사_A와_B_참가 {
 
@@ -557,6 +630,10 @@ class StaySearchSupplierIntegrationTest {
 
     private void A만_참가시킨다() {
         참가시킨다("A");
+    }
+
+    private void B만_참가시킨다() {
+        참가시킨다("B");
     }
 
     private void 참가시킨다(String supplier) {
